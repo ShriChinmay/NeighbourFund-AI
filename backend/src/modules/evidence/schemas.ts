@@ -69,6 +69,34 @@ export const extractionConfidenceSchema = z.record(
 );
 
 // --------------------------------------------------
+// Public evidence upload request
+// --------------------------------------------------
+
+export const createEvidenceRequestSchema = z.object({
+  projectId: z.string().trim().min(1, "Project ID is required."),
+
+  milestoneId: z.string().trim().min(1).optional(),
+
+  expenseId: z.string().trim().min(1).optional(),
+
+  originalFileName: z.string().trim().min(1).max(255),
+
+  mimeType: z.enum(ALLOWED_EVIDENCE_MIME_TYPES),
+
+  fileSize: z.number()
+    .int()
+    .positive()
+    .max(
+      MAX_EVIDENCE_FILE_SIZE,
+      "File size cannot exceed 10 MB."
+    ),
+}).strict();
+
+export type CreateEvidenceRequestData = z.infer<
+  typeof createEvidenceRequestSchema
+>;
+
+// --------------------------------------------------
 // Evidence creation validation
 // --------------------------------------------------
 

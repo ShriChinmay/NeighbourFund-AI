@@ -1,3 +1,4 @@
+
 import { describe, it, expect, beforeEach } from "vitest";
 
 import { EvidenceService } from "./service.js";
@@ -6,10 +7,12 @@ import { InMemoryEvidenceRepository } from "./in-memory-repo.js";
 import type {
   CreateEvidenceInput,
   InvoiceMetadata,
+  EvidenceRecord,
 } from "./types.js";
 
 describe("Evidence Module", () => {
   let service: EvidenceService;
+  let repository: InMemoryEvidenceRepository;
 
   const validEvidence: CreateEvidenceInput = {
     projectId: "project-1",
@@ -21,8 +24,26 @@ describe("Evidence Module", () => {
     fileSize: 204800,
   };
 
+  const validExpense = {
+    projectId: "project-1",
+    budgetId: "budget-1",
+    vendor: "Solar Solutions Ltd",
+    amountMinor: 1250000,
+    currency: "INR",
+    date: "2026-11-05",
+    reviewStatus: "pending",
+  };
+
+  const matchingMetadata: InvoiceMetadata = {
+    invoiceNumber: "INV-1001",
+    vendorName: "Solar Solutions Ltd",
+    invoiceDate: "2026-11-05",
+    totalAmountCents: 1250000,
+    currency: "INR",
+  };
+
   beforeEach(() => {
-    const repository = new InMemoryEvidenceRepository();
+    repository = new InMemoryEvidenceRepository();
     service = new EvidenceService(repository);
   });
 
@@ -93,8 +114,6 @@ describe("Evidence Module", () => {
   // --------------------------------------------------
 
   it("should persist invoice extraction confidence scores", async () => {
-    const repository = new InMemoryEvidenceRepository();
-
     const extractionProvider = {
       extractInvoice: async () => ({
         metadata: {
@@ -141,14 +160,7 @@ describe("Evidence Module", () => {
   // --------------------------------------------------
 
   it("should create an expense with valid details", async () => {
-    const expense = await service.createExpense({
-      projectId: "project-1",
-      budgetId: "budget-1",
-      vendor: "Solar Solutions Ltd",
-      amountMinor: 1250000,
-      date: "2026-11-05",
-      reviewStatus: "pending",
-    });
+    const expense = await service.createExpense(validExpense);
 
     expect(expense.id).toBeDefined();
     expect(expense.projectId).toBe("project-1");
@@ -161,33 +173,21 @@ describe("Evidence Module", () => {
   it("should reject an expense with an invalid amount", async () => {
     await expect(
       service.createExpense({
-        projectId: "project-1",
-        budgetId: "budget-1",
-        vendor: "Solar Solutions Ltd",
+        ...validExpense,
         amountMinor: -100,
-        date: "2026-11-05",
-        reviewStatus: "pending",
       })
     ).rejects.toThrow();
   });
 
   it("should retrieve expenses belonging to a project", async () => {
-    await service.createExpense({
-      projectId: "project-1",
-      budgetId: "budget-1",
-      vendor: "Solar Solutions Ltd",
-      amountMinor: 1250000,
-      date: "2026-11-05",
-      reviewStatus: "pending",
-    });
+    await service.createExpense(validExpense);
 
     await service.createExpense({
+      ...validExpense,
       projectId: "project-2",
       budgetId: "budget-2",
       vendor: "Other Vendor",
       amountMinor: 500000,
-      date: "2026-11-06",
-      reviewStatus: "pending",
     });
 
     const expenses =
@@ -210,16 +210,10 @@ describe("Evidence Module", () => {
       totalAmountCents: 0.92,
     }
   ) {
-    const repository = new InMemoryEvidenceRepository();
-
     const extractionProvider = {
       extractInvoice: async () => ({
         metadata: {
-          invoiceNumber: "INV-1001",
-          vendorName: "Solar Solutions Ltd",
-          invoiceDate: "2026-11-05",
-          totalAmountCents: 1250000,
-          currency: "INR",
+          ...matchingMetadata,
           ...metadataOverrides,
         },
         provider: "test-provider",
@@ -241,29 +235,19 @@ describe("Evidence Module", () => {
       await comparisonService.confirmInvoiceMetadata(
         evidence.id,
         {
-          invoiceNumber: "INV-1001",
-          vendorName: "Solar Solutions Ltd",
-          invoiceDate: "2026-11-05",
-          totalAmountCents: 1250000,
-          currency: "INR",
+          ...matchingMetadata,
           ...metadataOverrides,
         }
       );
 
-    const expense = await comparisonService.createExpense({
-      projectId: "project-1",
-      budgetId: "budget-1",
-      vendor: "Solar Solutions Ltd",
-      amountMinor: 1250000,
-      currency: "INR",
-      date: "2026-11-05",
-      reviewStatus: "pending",
-    });
+    const expense =
+      await comparisonService.createExpense(validExpense);
 
     return {
       comparisonService,
       evidence: confirmedEvidence,
       expense,
+      repository,
     };
   }
 
@@ -288,8 +272,10 @@ describe("Evidence Module", () => {
 
     expect(result.flags).toHaveLength(1);
     expect(result.flags[0].flagType).toBe("amount_differs");
+    expect(result.flags[0].evidenceId).toBe(evidence.id);
     expect(result.reviews).toHaveLength(1);
     expect(result.reviews[0].resolution).toBeUndefined();
+    expect(result.reviews[0].evidenceId).toBe(evidence.id);
   });
 
   it("should flag a vendor mismatch", async () => {
@@ -383,21 +369,13 @@ describe("Evidence Module", () => {
   // --------------------------------------------------
 
   it("should reject comparison when invoice metadata is not confirmed", async () => {
-    const repository = new InMemoryEvidenceRepository();
-
     const comparisonService = new EvidenceService(repository);
 
     const evidence =
       await comparisonService.createEvidence(validEvidence);
 
-    const expense = await comparisonService.createExpense({
-      projectId: "project-1",
-      budgetId: "budget-1",
-      vendor: "Solar Solutions Ltd",
-      amountMinor: 1250000,
-      date: "2026-11-05",
-      reviewStatus: "pending",
-    });
+    const expense =
+      await comparisonService.createExpense(validExpense);
 
     await expect(
       comparisonService.compareInvoiceWithExpense(
@@ -417,13 +395,9 @@ describe("Evidence Module", () => {
 
     const otherExpense =
       await comparisonService.createExpense({
+        ...validExpense,
         projectId: "project-2",
         budgetId: "budget-2",
-        vendor: "Solar Solutions Ltd",
-        amountMinor: 1250000,
-        currency: "INR",
-        date: "2026-11-05",
-        reviewStatus: "pending",
       });
 
     await expect(
@@ -517,5 +491,441 @@ describe("Evidence Module", () => {
         "approved"
       )
     ).rejects.toThrow("Verification review not found.");
+  });
+
+  // --------------------------------------------------
+  // 8. Metadata-change invalidation tests
+  // --------------------------------------------------
+
+  it("should supersede previous flags and reviews when confirmed metadata changes", async () => {
+    const {
+      comparisonService,
+      evidence,
+      expense,
+    } = await prepareComparison({
+      totalAmountCents: 1500000,
+    });
+
+    const comparison =
+      await comparisonService.compareInvoiceWithExpense(
+        evidence.id,
+        expense.id
+      );
+
+    expect(comparison.reviews).toHaveLength(1);
+
+    const review = comparison.reviews[0];
+
+    await comparisonService.resolveVerificationReview(
+      review.id,
+      "reviewer-1",
+      "approved",
+      "Previously approved invoice."
+    );
+
+    const updatedMetadata: InvoiceMetadata = {
+      ...matchingMetadata,
+      totalAmountCents: 1250000,
+    };
+
+    await comparisonService.confirmInvoiceMetadata(
+      evidence.id,
+      updatedMetadata
+    );
+
+    const storedReview =
+      await repository.getVerificationReviewById(review.id);
+
+    expect(storedReview?.status).toBe("superseded");
+    expect(storedReview?.resolution).toBe("approved");
+    expect(storedReview?.supersededReason).toContain(
+      "Confirmed invoice metadata changed"
+    );
+
+    const flags =
+      await repository.getFlagsByEvidence(evidence.id);
+
+    expect(flags).toHaveLength(1);
+    expect(flags[0].status).toBe("superseded");
+  });
+
+  it("should preserve previous review decisions in audit history after metadata changes", async () => {
+    const {
+      comparisonService,
+      evidence,
+      expense,
+    } = await prepareComparison({
+      totalAmountCents: 1500000,
+    });
+
+    const comparison =
+      await comparisonService.compareInvoiceWithExpense(
+        evidence.id,
+        expense.id
+      );
+
+    const review = comparison.reviews[0];
+
+    await comparisonService.resolveVerificationReview(
+      review.id,
+      "reviewer-1",
+      "approved",
+      "Invoice amount checked."
+    );
+
+    await comparisonService.confirmInvoiceMetadata(
+      evidence.id,
+      {
+        ...matchingMetadata,
+        totalAmountCents: 1250000,
+      }
+    );
+
+    const history =
+      await repository.getReviewAuditHistory(review.id);
+
+    expect(history.length).toBeGreaterThanOrEqual(3);
+
+    expect(
+      history.some(
+        (event) =>
+          event.action === "updated" &&
+          event.newResolution === "approved"
+      )
+    ).toBe(true);
+
+    expect(
+      history.some(
+        (event) => event.action === "superseded"
+      )
+    ).toBe(true);
+  });
+
+  it("should not invalidate existing reviews when confirmed metadata remains unchanged", async () => {
+    const {
+      comparisonService,
+      evidence,
+      expense,
+    } = await prepareComparison({
+      totalAmountCents: 1500000,
+    });
+
+    const comparison =
+      await comparisonService.compareInvoiceWithExpense(
+        evidence.id,
+        expense.id
+      );
+
+    const review = comparison.reviews[0];
+
+    await comparisonService.confirmInvoiceMetadata(
+      evidence.id,
+      {
+        ...matchingMetadata,
+        totalAmountCents: 1500000,
+      }
+    );
+
+    const storedReview =
+      await repository.getVerificationReviewById(review.id);
+
+    expect(storedReview?.status).toBe("active");
+  });
+
+  it("should not allow a superseded review to be resolved again", async () => {
+    const {
+      comparisonService,
+      evidence,
+      expense,
+    } = await prepareComparison({
+      totalAmountCents: 1500000,
+    });
+
+    const comparison =
+      await comparisonService.compareInvoiceWithExpense(
+        evidence.id,
+        expense.id
+      );
+
+    const review = comparison.reviews[0];
+
+    await comparisonService.confirmInvoiceMetadata(
+      evidence.id,
+      {
+        ...matchingMetadata,
+        totalAmountCents: 1250000,
+      }
+    );
+
+    await expect(
+      comparisonService.resolveVerificationReview(
+        review.id,
+        "reviewer-1",
+        "approved"
+      )
+    ).rejects.toThrow(
+      "This review has been superseded and can no longer be resolved."
+    );
+  });
+
+  // --------------------------------------------------
+  // 9. Evidence-specific review and duplicate prevention
+  // --------------------------------------------------
+
+  it("should not create duplicate active reviews when the same evidence is compared twice", async () => {
+      const {
+        comparisonService,
+        evidence,
+        expense,
+      } = await prepareComparison({
+        totalAmountCents: 1500000,
+      });
+
+      const first =
+        await comparisonService.compareInvoiceWithExpense(
+          evidence.id,
+          expense.id
+        );
+
+      const second =
+        await comparisonService.compareInvoiceWithExpense(
+          evidence.id,
+          expense.id
+        );
+
+      expect(first.reviews).toHaveLength(1);
+      expect(second.reviews).toHaveLength(0);
+
+      const storedReviews =
+        await repository.getReviewsByEvidence(evidence.id);
+
+      expect(storedReviews).toHaveLength(1);
+    });
+
+  it("should keep reviews for different evidence documents independent", async () => {
+    const {
+      comparisonService,
+      evidence,
+      expense,
+    } = await prepareComparison({
+      vendorName: "Different Solar Vendor",
+    });
+
+    const firstComparison =
+      await comparisonService.compareInvoiceWithExpense(
+        evidence.id,
+        expense.id
+      );
+
+    const secondEvidence =
+      await comparisonService.createEvidence({
+        ...validEvidence,
+        originalFileName: "second-invoice.pdf",
+        storageKey: "evidence/second-invoice.pdf",
+      });
+
+    await comparisonService.extractInvoiceMetadata(secondEvidence.id);
+
+    await comparisonService.confirmInvoiceMetadata(
+      secondEvidence.id,
+      {
+        ...matchingMetadata,
+        invoiceNumber: "INV-1002",
+        vendorName: "Another Different Vendor",
+      }
+    );
+
+    const secondComparison =
+      await comparisonService.compareInvoiceWithExpense(
+        secondEvidence.id,
+        expense.id
+      );
+
+    // Each evidence document must have its own review.
+    expect(firstComparison.reviews).toHaveLength(1);
+    expect(secondComparison.reviews).toHaveLength(1);
+
+    expect(firstComparison.reviews[0].evidenceId).toBe(
+      evidence.id
+    );
+
+    expect(secondComparison.reviews[0].evidenceId).toBe(
+      secondEvidence.id
+    );
+
+    // Updating the first evidence must not invalidate
+    // reviews belonging to the second evidence.
+    await comparisonService.confirmInvoiceMetadata(
+      evidence.id,
+      {
+        ...matchingMetadata,
+        vendorName: "Solar Solutions Ltd",
+      }
+    );
+
+    const firstReviews =
+      await repository.getReviewsByEvidence(evidence.id);
+
+    const secondReviews =
+      await repository.getReviewsByEvidence(secondEvidence.id);
+
+    expect(firstReviews[0].status).toBe("superseded");
+    expect(secondReviews[0].status).toBe("active");
+  });
+
+
+  // --------------------------------------------------
+  // 10. Gate A evidence readiness tests
+  // --------------------------------------------------
+
+  async function prepareGateA() {
+    const expense =
+      await service.createExpense(validExpense);
+
+    const linkedEvidenceInput: CreateEvidenceInput = {
+      ...validEvidence,
+      expenseId: expense.id,
+    };
+
+    const extractionProvider = {
+      extractInvoice: async () => ({
+        metadata: {
+          ...matchingMetadata,
+          totalAmountCents: 1500000,
+        },
+        provider: "test-provider",
+        confidence: {
+          vendorName: 0.98,
+          totalAmountCents: 0.95,
+        },
+      }),
+    };
+
+    const gateService = new EvidenceService(
+      repository,
+      extractionProvider
+    );
+
+    const evidence =
+      await gateService.createEvidence(linkedEvidenceInput);
+
+    await gateService.extractInvoiceMetadata(evidence.id);
+
+    await gateService.confirmInvoiceMetadata(
+      evidence.id,
+      {
+        ...matchingMetadata,
+        totalAmountCents: 1500000,
+      }
+    );
+
+    const comparison =
+      await gateService.compareInvoiceWithExpense(
+        evidence.id,
+        expense.id
+      );
+
+    return {
+      gateService,
+      evidence,
+      expense,
+      review: comparison.reviews[0],
+    };
+  }
+
+  it("should allow Gate A when the current evidence has reviewer approval and no unresolved reviews", async () => {
+    const {
+      gateService,
+      evidence,
+      expense,
+      review,
+    } = await prepareGateA();
+
+    await gateService.resolveVerificationReview(
+      review.id,
+      "reviewer-1",
+      "approved",
+      "Evidence verified."
+    );
+
+    const result = await gateService.assessGateAEvidence({
+      projectId: "project-1",
+      expenseId: expense.id,
+      evidenceId: evidence.id,
+      reviewerId: "reviewer-1",
+      organiserId: "organiser-1",
+    });
+
+    expect(result.eligible).toBe(true);
+    expect(result.reasons).toHaveLength(0);
+  });
+
+  it("should reject Gate A when the organiser is also the reviewer", async () => {
+    const {
+      gateService,
+      evidence,
+      expense,
+      review,
+    } = await prepareGateA();
+
+    await gateService.resolveVerificationReview(
+      review.id,
+      "organiser-1",
+      "approved",
+      "Review completed."
+    );
+
+    const result = await gateService.assessGateAEvidence({
+      projectId: "project-1",
+      expenseId: expense.id,
+      evidenceId: evidence.id,
+      reviewerId: "organiser-1",
+      organiserId: "organiser-1",
+    });
+
+    expect(result.eligible).toBe(false);
+
+    expect(result.reasons).toContain(
+      "Organiser cannot approve their own expense."
+    );
+  });
+
+  it("should reject Gate A when the approval belongs to another evidence document", async () => {
+    const {
+      gateService,
+      evidence,
+      expense,
+      review,
+    } = await prepareGateA();
+
+    await gateService.resolveVerificationReview(
+      review.id,
+      "reviewer-1",
+      "approved",
+      "Evidence verified."
+    );
+
+    const anotherEvidence: EvidenceRecord = {
+      ...evidence,
+      id: "another-evidence",
+      originalFileName: "another-invoice.pdf",
+      storageKey: "evidence/another-invoice.pdf",
+    };
+
+    await repository.createEvidence(anotherEvidence);
+
+    const result = await gateService.assessGateAEvidence({
+      projectId: "project-1",
+      expenseId: expense.id,
+      evidenceId: anotherEvidence.id,
+      reviewerId: "reviewer-1",
+      organiserId: "organiser-1",
+    });
+
+    expect(result.eligible).toBe(false);
+
+    expect(result.reasons).toContain(
+      "Evidence does not have approval from the specified reviewer."
+    );
   });
 });

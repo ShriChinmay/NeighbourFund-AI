@@ -1,3 +1,4 @@
+
 import { randomUUID } from "node:crypto";
 
 import type { EvidenceRepository } from "./repo.js";
@@ -33,6 +34,50 @@ export interface InvoiceExtractionProvider {
   extractInvoice(
     evidence: EvidenceRecord
   ): Promise<InvoiceExtractionResult>;
+}
+
+// --------------------------------------------------
+// Metadata comparison helper
+// --------------------------------------------------
+
+function normalizeMetadata(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(normalizeMetadata);
+  }
+
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, item]) => [key, normalizeMetadata(item)])
+    );
+  }
+
+  return value;
+}
+
+function metadataChanged(
+  previous?: InvoiceMetadata,
+  next?: InvoiceMetadata
+): boolean {
+  return (
+    JSON.stringify(normalizeMetadata(previous ?? {})) !==
+    JSON.stringify(normalizeMetadata(next ?? {}))
+  );
+}
+
+function isUnresolvedReview(review: VerificationReview): boolean {
+  return (
+    review.status !== "superseded" &&
+    (
+      review.resolution === undefined ||
+      review.resolution === "more_info"
+    )
+  );
+}
+
+function isActiveReview(review: VerificationReview): boolean {
+  return review.status !== "superseded";
 }
 
 // --------------------------------------------------
@@ -74,7 +119,26 @@ export class EvidenceService {
   }
 
   // --------------------------------------------------
-  // 2. Create evidence record
+  // 2. Invalidate stale evidence decisions
+  // --------------------------------------------------
+
+  private async invalidateEvidenceReviews(
+    evidenceId: string,
+    reason: string
+  ): Promise<void> {
+    await this.repo.supersedeActiveFlagsByEvidence(
+      evidenceId,
+      reason
+    );
+
+    await this.repo.supersedeReviewsByEvidence(
+      evidenceId,
+      reason
+    );
+  }
+
+  // --------------------------------------------------
+  // 3. Create evidence record
   // --------------------------------------------------
 
   async createEvidence(
@@ -82,8 +146,6 @@ export class EvidenceService {
   ): Promise<EvidenceRecord> {
     this.validateUpload(input);
 
-    // If an expense is supplied, verify that it exists and belongs
-    // to the same project before linking the evidence document.
     if (input.expenseId) {
       const expense = await this.repo.getExpenseById(input.expenseId);
 
@@ -119,7 +181,7 @@ export class EvidenceService {
   }
 
   // --------------------------------------------------
-  // 3. Retrieve evidence by ID
+  // 4. Retrieve evidence by ID
   // --------------------------------------------------
 
   async getEvidenceById(
@@ -139,7 +201,7 @@ export class EvidenceService {
   }
 
   // --------------------------------------------------
-  // 4. Retrieve evidence for a project
+  // 5. Retrieve evidence for a project
   // --------------------------------------------------
 
   async getEvidenceByProject(
@@ -153,7 +215,7 @@ export class EvidenceService {
   }
 
   // --------------------------------------------------
-  // 5. Extract invoice metadata and confidence scores
+  // 6. Extract invoice metadata and confidence scores
   // --------------------------------------------------
 
   async extractInvoiceMetadata(
@@ -214,27 +276,46 @@ export class EvidenceService {
         confidence = parsedConfidence.data;
       }
 
-      return this.repo.updateExtractedMetadata(
+      const updated = await this.repo.updateExtractedMetadata(
         evidenceId,
         parsedMetadata.data,
         extraction.provider,
         confidence
       );
-    } catch (error) {
-      const failedEvidence: EvidenceRecord = {
-        ...processingEvidence,
-        status: "uploaded",
-        updatedAt: new Date(),
-      };
 
-      await this.repo.updateEvidence(failedEvidence);
+      const previousMetadata =
+        evidence.confirmedMetadata ?? evidence.extractedMetadata;
+
+      if (
+        metadataChanged(
+          previousMetadata,
+          parsedMetadata.data
+        )
+      ) {
+        await this.invalidateEvidenceReviews(
+          evidenceId,
+          "Invoice metadata changed after extraction. Previous discrepancy decisions are no longer valid."
+        );
+      }
+
+      return updated;
+    } catch (error) {
+      const latest = await this.repo.getEvidenceById(evidenceId);
+
+      if (latest?.status === "processing") {
+        await this.repo.updateEvidence({
+          ...latest,
+          status: "uploaded",
+          updatedAt: new Date(),
+        });
+      }
 
       throw error;
     }
   }
 
   // --------------------------------------------------
-  // 6. Human confirmation or correction of invoice data
+  // 7. Human confirmation or correction of invoice data
   // --------------------------------------------------
 
   async confirmInvoiceMetadata(
@@ -262,6 +343,14 @@ export class EvidenceService {
       );
     }
 
+    const previousMetadata =
+      evidence.confirmedMetadata ?? evidence.extractedMetadata;
+
+    const changed = metadataChanged(
+      previousMetadata,
+      parsed.data
+    );
+
     const updated: EvidenceRecord = {
       ...evidence,
       confirmedMetadata: parsed.data,
@@ -269,11 +358,20 @@ export class EvidenceService {
       updatedAt: new Date(),
     };
 
-    return this.repo.updateEvidence(updated);
+    const saved = await this.repo.updateEvidence(updated);
+
+    if (changed) {
+      await this.invalidateEvidenceReviews(
+        evidenceId,
+        "Confirmed invoice metadata changed. Previous discrepancy decisions are no longer valid."
+      );
+    }
+
+    return saved;
   }
 
   // --------------------------------------------------
-  // 7. Reject evidence
+  // 8. Reject evidence
   // --------------------------------------------------
 
   async rejectEvidence(
@@ -293,11 +391,18 @@ export class EvidenceService {
       updatedAt: new Date(),
     };
 
-    return this.repo.updateEvidence(updated);
+    const saved = await this.repo.updateEvidence(updated);
+
+    await this.invalidateEvidenceReviews(
+      evidenceId,
+      "Evidence document was rejected. Its previous discrepancy decisions are no longer active."
+    );
+
+    return saved;
   }
 
   // --------------------------------------------------
-  // 8. Create an expense record
+  // 9. Create an expense record
   // --------------------------------------------------
 
   async createExpense(
@@ -329,7 +434,7 @@ export class EvidenceService {
   }
 
   // --------------------------------------------------
-  // 9. Retrieve expenses belonging to a project
+  // 10. Retrieve expenses belonging to a project
   // --------------------------------------------------
 
   async getExpensesByProject(
@@ -343,7 +448,7 @@ export class EvidenceService {
   }
 
   // --------------------------------------------------
-  // 10. Compare confirmed invoice with an expense
+  // 11. Compare confirmed invoice with an expense
   // --------------------------------------------------
 
   async compareInvoiceWithExpense(
@@ -388,26 +493,21 @@ export class EvidenceService {
     const flags: EvidenceFlag[] = [];
     const reviews: VerificationReview[] = [];
 
-    // Avoid creating duplicate unresolved reviews.
-    // Previously resolved reviews do not block new discrepancies.
-    const existingReviews = await this.repo.getReviewsByExpense(
-      expense.id
-    );
+    // Only reviews belonging to this evidence are considered.
+    const existingReviews =
+      await this.repo.getReviewsByEvidence(evidenceId);
 
     const addFlag = async (
       flagType: FlagType,
       explanation: string
     ): Promise<void> => {
-      const unresolvedAlreadyExists = existingReviews.some(
+      const activeAlreadyExists = existingReviews.some(
         (review) =>
           review.flagType === flagType &&
-          (
-            review.resolution === undefined ||
-            review.resolution === "more_info"
-          )
+          isActiveReview(review)
       );
 
-      if (unresolvedAlreadyExists) {
+      if (activeAlreadyExists) {
         return;
       }
 
@@ -416,8 +516,10 @@ export class EvidenceService {
       const flag: EvidenceFlag = {
         id: randomUUID(),
         expenseId: expense.id,
+        evidenceId: evidence.id,
         flagType,
         explanation,
+        status: "active",
         createdAt: now,
       };
 
@@ -427,19 +529,21 @@ export class EvidenceService {
       const review: VerificationReview = {
         id: randomUUID(),
         expenseId: expense.id,
+        evidenceId: evidence.id,
         flagType,
         explanation,
+        status: "active",
         createdAt: now,
         updatedAt: now,
       };
 
       await this.repo.createVerificationReview(review);
       reviews.push(review);
+
+      existingReviews.push(review);
     };
 
-    // --------------------------------------------------
-    // 10.1 Currency and amount comparison
-    // --------------------------------------------------
+    // 11.1 Currency and amount comparison
 
     if (metadata.totalAmountCents !== undefined) {
       if (!metadata.currency || !expense.currency) {
@@ -464,9 +568,7 @@ export class EvidenceService {
       }
     }
 
-    // --------------------------------------------------
-    // 10.2 Vendor mismatch detection
-    // --------------------------------------------------
+    // 11.2 Vendor mismatch detection
 
     if (
       metadata.vendorName &&
@@ -479,9 +581,7 @@ export class EvidenceService {
       );
     }
 
-    // --------------------------------------------------
-    // 10.3 Low-confidence extraction detection
-    // --------------------------------------------------
+    // 11.3 Low-confidence extraction detection
 
     if (evidence.confidence) {
       const lowConfidenceFields = Object.entries(
@@ -498,9 +598,7 @@ export class EvidenceService {
       }
     }
 
-    // --------------------------------------------------
-    // 10.4 Duplicate invoice number detection
-    // --------------------------------------------------
+    // 11.4 Duplicate invoice number detection
 
     if (metadata.invoiceNumber) {
       const projectEvidence =
@@ -532,9 +630,7 @@ export class EvidenceService {
       }
     }
 
-    // --------------------------------------------------
-    // 10.5 Missing expected invoice line detection
-    // --------------------------------------------------
+    // 11.5 Missing expected invoice line detection
 
     if (expectedLineItems.length > 0) {
       const invoiceLineItems = metadata.lineItems ?? [];
@@ -568,7 +664,7 @@ export class EvidenceService {
   }
 
   // --------------------------------------------------
-  // 11. Retrieve unresolved verification review queue
+  // 12. Retrieve unresolved verification review queue
   // --------------------------------------------------
 
   async getReviewQueue(
@@ -596,9 +692,7 @@ export class EvidenceService {
         await this.repo.getReviewsByExpense(expense.id);
 
       const unresolvedReviews = reviews.filter(
-        (review) =>
-          review.resolution === undefined ||
-          review.resolution === "more_info"
+        isUnresolvedReview
       );
 
       if (unresolvedReviews.length > 0) {
@@ -613,7 +707,7 @@ export class EvidenceService {
   }
 
   // --------------------------------------------------
-  // 12. Resolve a verification review
+  // 13. Resolve a verification review
   // --------------------------------------------------
 
   async resolveVerificationReview(
@@ -644,6 +738,12 @@ export class EvidenceService {
       throw new Error("Verification review not found.");
     }
 
+    if (existing.status === "superseded") {
+      throw new Error(
+        "This review has been superseded and can no longer be resolved."
+      );
+    }
+
     if (
       existing.resolution !== undefined &&
       existing.resolution !== "more_info"
@@ -671,7 +771,7 @@ export class EvidenceService {
   }
 
   // --------------------------------------------------
-  // 13. Project evidence coverage report
+  // 14. Project evidence coverage report
   // --------------------------------------------------
 
   async getEvidenceCoverage(projectId: string): Promise<{
@@ -684,6 +784,16 @@ export class EvidenceService {
     expensesWithUnresolvedReviews: number;
     expensesWithoutUnresolvedReviews: number;
     unresolvedReviewCount: number;
+
+    // Document confirmation metric:
+    // confirmed documents / total documents.
+    documentConfirmationRate: number;
+
+    // Expense evidence coverage metric:
+    // expenses with confirmed evidence / expenses requiring evidence.
+    expenseEvidenceCoverage: number;
+
+    // Backward-compatible alias for document confirmation rate.
     coveragePercentage: number;
   }> {
     if (!projectId.trim()) {
@@ -701,11 +811,7 @@ export class EvidenceService {
     for (const expense of expenses) {
       const reviews = await this.repo.getReviewsByExpense(expense.id);
 
-      const unresolved = reviews.filter(
-        (review) =>
-          review.resolution === undefined ||
-          review.resolution === "more_info"
-      );
+      const unresolved = reviews.filter(isUnresolvedReview);
 
       if (unresolved.length > 0) {
         expensesWithUnresolvedReviews++;
@@ -728,10 +834,37 @@ export class EvidenceService {
       (item) => item.status === "rejected"
     ).length;
 
-    const coveragePercentage =
+    const documentConfirmationRate =
       evidence.length === 0
         ? 0
-        : Math.round((confirmedDocuments / evidence.length) * 100);
+        : Math.round(
+            (confirmedDocuments / evidence.length) * 100
+          );
+
+    /*
+     * The current ExpenseRecord model does not have a
+     * requiresEvidence field. Until that field is introduced
+     * in the shared contract/schema, this implementation
+     * treats every project expense as requiring evidence.
+     *
+     * An expense is covered when at least one linked evidence
+     * document is human-confirmed.
+     */
+    const expensesWithConfirmedEvidence = expenses.filter(
+      (expense) =>
+        evidence.some(
+          (item) =>
+            item.expenseId === expense.id &&
+            item.status === "confirmed"
+        )
+    ).length;
+
+    const expenseEvidenceCoverage =
+      expenses.length === 0
+        ? 0
+        : Math.round(
+            (expensesWithConfirmedEvidence / expenses.length) * 100
+          );
 
     return {
       projectId,
@@ -744,12 +877,14 @@ export class EvidenceService {
       expensesWithoutUnresolvedReviews:
         expenses.length - expensesWithUnresolvedReviews,
       unresolvedReviewCount,
-      coveragePercentage,
+      documentConfirmationRate,
+      expenseEvidenceCoverage,
+      coveragePercentage: documentConfirmationRate,
     };
   }
 
   // --------------------------------------------------
-  // 14. Gate A evidence readiness assessment
+  // 15. Gate A evidence readiness assessment
   // --------------------------------------------------
 
   async assessGateAEvidence(input: {
@@ -813,30 +948,43 @@ export class EvidenceService {
       if (evidence.status !== "confirmed") {
         reasons.push("Evidence has not been human-confirmed.");
       }
+
+      if (!evidence.confirmedMetadata) {
+        reasons.push(
+          "Evidence does not contain human-confirmed invoice metadata."
+        );
+      }
     }
 
-    if (expense) {
-      const reviews = await this.repo.getReviewsByExpense(expenseId);
+    if (expense && evidence) {
+      // Gate A checks active reviews for the specified expense.
+      // Superseded decisions are historical and do not block readiness.
+      const expenseReviews =
+        await this.repo.getReviewsByExpense(expenseId);
 
-      const unresolvedReviews = reviews.filter(
-        (review) =>
-          review.resolution === undefined ||
-          review.resolution === "more_info"
+      const activeReviews = expenseReviews.filter(
+        isActiveReview
+      );
+
+      const unresolvedReviews = activeReviews.filter(
+        isUnresolvedReview
       );
 
       if (unresolvedReviews.length > 0) {
         reasons.push("Expense has unresolved verification reviews.");
       }
 
-      const approvedReview = reviews.some(
+      // Approval must be for the current evidence document.
+      const approvedReview = activeReviews.some(
         (review) =>
+          review.evidenceId === evidenceId &&
           review.resolution === "approved" &&
           review.reviewerId === reviewerId
       );
 
       if (!approvedReview) {
         reasons.push(
-          "Expense does not have approval from the specified reviewer."
+          "Evidence does not have approval from the specified reviewer."
         );
       }
 

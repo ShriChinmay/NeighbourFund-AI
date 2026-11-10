@@ -166,11 +166,44 @@ export class CompletionService {
       );
     }
 
+    // A completion specification may have multiple proof submissions over
+    // time, but only after the latest submission was rejected or marked
+    // needs_more. Previous submissions and their reviews remain immutable
+    // history; a resubmission always receives a new ID.
+    const latestProof = await this.repo.getProofBySpecId(spec.id);
+
+    if (latestProof) {
+      const latestReview = await this.repo.getLatestProofReview(
+        latestProof.id
+      );
+
+      if (!latestReview) {
+        throw new Error(
+          "The latest proof submission is awaiting review."
+        );
+      }
+
+      if (latestReview.decision === "approved") {
+        throw new Error(
+          "An approved completion proof cannot be resubmitted."
+        );
+      }
+
+      if (
+        latestReview.decision !== "rejected" &&
+        latestReview.decision !== "needs_more"
+      ) {
+        throw new Error(
+          "A new proof can only be submitted after rejection or a needs_more decision."
+        );
+      }
+    }
+
     const proof: ProofSubmission = {
       id: randomUUID(),
       specId: spec.id,
-      fileRefs: input.fileRefs,
-      checklist: input.checklist,
+      fileRefs: [...input.fileRefs],
+      checklist: { ...input.checklist },
       submittedAt: new Date(),
     };
 

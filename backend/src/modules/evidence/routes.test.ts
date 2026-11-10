@@ -6,14 +6,23 @@ import { resolve } from "node:path";
 
 import { EvidenceService } from "./service.js";
 import { InMemoryEvidenceRepository } from "./in-memory-repo.js";
+import { MAX_EVIDENCE_FILE_SIZE } from "./schemas.js";
 import {
-  MAX_EVIDENCE_FILE_SIZE,
-} from "./schemas.js";
-import { createEvidenceRouter } from "./routes.js";
+  createEvidenceRouter,
+  type EvidenceAuthorization,
+} from "./routes.js";
 
 describe("Evidence Upload Routes", () => {
   let app: express.Express;
   const uploadedFiles: string[] = [];
+
+  const testAuthorization: EvidenceAuthorization = {
+    canUpload: async () => true,
+    canReview: async () => true,
+    canAccessReviewQueue: async () => true,
+    canResolveReview: async () => true,
+    canAssessGateA: async () => true,
+  };
 
   beforeEach(() => {
     const repository = new InMemoryEvidenceRepository();
@@ -21,7 +30,16 @@ describe("Evidence Upload Routes", () => {
 
     app = express();
     app.use(express.json());
-    app.use("/api", createEvidenceRouter(service));
+    app.use(
+      "/api",
+      createEvidenceRouter(
+        service,
+        undefined,
+        undefined,
+        () => "trusted-uploader-1",
+        testAuthorization
+      )
+    );
   });
 
   afterEach(async () => {
@@ -36,19 +54,15 @@ describe("Evidence Upload Routes", () => {
     }
   });
 
-  it("uploads a valid PDF document", async () => {
+  it("uploads a valid PDF document using the authenticated uploader identity", async () => {
     const response = await request(app)
       .post("/api/milestones/milestone-1/documents")
       .field("projectId", "project-1")
-      .field("uploadedBy", "organiser-1")
-      .attach(
-        "file",
-        Buffer.from("%PDF-1.4\nTest invoice"),
-        {
-          filename: "invoice.pdf",
-          contentType: "application/pdf",
-        }
-      );
+      .field("uploadedBy", "forged-client-uploader")
+      .attach("file", Buffer.from("%PDF-1.4\nTest invoice"), {
+        filename: "invoice.pdf",
+        contentType: "application/pdf",
+      });
 
     expect(response.status).toBe(201);
     expect(response.body.success).toBe(true);
@@ -56,6 +70,7 @@ describe("Evidence Upload Routes", () => {
     expect(response.body.data.projectId).toBe("project-1");
     expect(response.body.data.milestoneId).toBe("milestone-1");
     expect(response.body.data.originalFileName).toBe("invoice.pdf");
+    expect(response.body.data.uploadedBy).toBe("trusted-uploader-1");
 
     uploadedFiles.push(response.body.data.storageKey);
   });
@@ -63,8 +78,7 @@ describe("Evidence Upload Routes", () => {
   it("rejects a request without a file", async () => {
     const response = await request(app)
       .post("/api/milestones/milestone-1/documents")
-      .field("projectId", "project-1")
-      .field("uploadedBy", "organiser-1");
+      .field("projectId", "project-1");
 
     expect(response.status).toBe(400);
     expect(response.body.success).toBe(false);
@@ -75,15 +89,10 @@ describe("Evidence Upload Routes", () => {
     const response = await request(app)
       .post("/api/milestones/milestone-1/documents")
       .field("projectId", "project-1")
-      .field("uploadedBy", "organiser-1")
-      .attach(
-        "file",
-        Buffer.from("plain text"),
-        {
-          filename: "invoice.txt",
-          contentType: "text/plain",
-        }
-      );
+      .attach("file", Buffer.from("plain text"), {
+        filename: "invoice.txt",
+        contentType: "text/plain",
+      });
 
     expect(response.status).toBe(400);
     expect(response.body.success).toBe(false);
@@ -96,7 +105,6 @@ describe("Evidence Upload Routes", () => {
     const response = await request(app)
       .post("/api/milestones/milestone-1/documents")
       .field("projectId", "project-1")
-      .field("uploadedBy", "organiser-1")
       .attach("file", oversizedFile, {
         filename: "large-invoice.pdf",
         contentType: "application/pdf",
@@ -107,21 +115,52 @@ describe("Evidence Upload Routes", () => {
     expect(response.body.message).toContain("10 MB");
   });
 
-  it("rejects missing project information", async () => {
+  it("rejects missing project information before authorization", async () => {
     const response = await request(app)
       .post("/api/milestones/milestone-1/documents")
-      .field("uploadedBy", "organiser-1")
-      .attach(
-        "file",
-        Buffer.from("%PDF-1.4\nTest invoice"),
-        {
-          filename: "invoice.pdf",
-          contentType: "application/pdf",
-        }
-      );
+      .attach("file", Buffer.from("%PDF-1.4\nTest invoice"), {
+        filename: "invoice.pdf",
+        contentType: "application/pdf",
+      });
 
     expect(response.status).toBe(400);
     expect(response.body.success).toBe(false);
     expect(response.body.errors).toBeDefined();
+  });
+
+  it("rejects a valid upload when the authorization interface denies access", async () => {
+    const repository = new InMemoryEvidenceRepository();
+    const service = new EvidenceService(repository);
+    const denyAuthorization: EvidenceAuthorization = {
+      canUpload: async () => false,
+      canReview: async () => false,
+      canAccessReviewQueue: async () => false,
+      canResolveReview: async () => false,
+      canAssessGateA: async () => false,
+    };
+
+    const deniedApp = express();
+    deniedApp.use(express.json());
+    deniedApp.use(
+      "/api",
+      createEvidenceRouter(
+        service,
+        undefined,
+        undefined,
+        () => "trusted-uploader-1",
+        denyAuthorization
+      )
+    );
+
+    const response = await request(deniedApp)
+      .post("/api/milestones/milestone-1/documents")
+      .field("projectId", "project-1")
+      .attach("file", Buffer.from("%PDF-1.4\nTest invoice"), {
+        filename: "invoice.pdf",
+        contentType: "application/pdf",
+      });
+
+    expect(response.status).toBe(403);
+    expect(response.body.success).toBe(false);
   });
 });

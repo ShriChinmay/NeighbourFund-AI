@@ -4,7 +4,10 @@ import { describe, expect, it } from "vitest";
 
 import { EvidenceService } from "./service.js";
 import { InMemoryEvidenceRepository } from "./in-memory-repo.js";
-import { createEvidenceRouter } from "./routes.js";
+import {
+  createEvidenceRouter,
+  type EvidenceAuthorization,
+} from "./routes.js";
 
 describe("Evidence Reviewer Routes", () => {
   function createApp(authenticated = false) {
@@ -14,11 +17,22 @@ describe("Evidence Reviewer Routes", () => {
     const app = express();
     app.use(express.json());
 
+    const testAuthorization: EvidenceAuthorization = {
+      canUpload: async () => false,
+      canReview: async () => false,
+      canAccessReviewQueue: async () => true,
+      canResolveReview: async () => true,
+      canAssessGateA: async () => false,
+    };
+
     app.use(
       "/api",
       createEvidenceRouter(
         service,
-        () => (authenticated ? "trusted-reviewer-1" : null)
+        () => (authenticated ? "trusted-reviewer-1" : null),
+        undefined,
+        undefined,
+        testAuthorization
       )
     );
 
@@ -32,7 +46,7 @@ describe("Evidence Reviewer Routes", () => {
     expect(response.status).toBe(401);
   });
 
-  it("allows an authenticated reviewer to retrieve an empty queue", async () => {
+  it("allows an authenticated and authorized reviewer to retrieve an empty queue", async () => {
     const response = await request(createApp(true))
       .get("/api/projects/project-1/review-queue");
 

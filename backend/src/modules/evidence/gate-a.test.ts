@@ -4,7 +4,10 @@ import express from "express";
 
 import { EvidenceService } from "./service.js";
 import { InMemoryEvidenceRepository } from "./in-memory-repo.js";
-import { createEvidenceRouter } from "./routes.js";
+import {
+  createEvidenceRouter,
+  type EvidenceAuthorization,
+} from "./routes.js";
 
 function setup(
   reviewerId: string | null = "reviewer-1",
@@ -15,11 +18,22 @@ function setup(
 
   const app = express();
   app.use(express.json());
+
+  const testAuthorization: EvidenceAuthorization = {
+    canUpload: async () => false,
+    canReview: async () => true,
+    canAccessReviewQueue: async () => true,
+    canResolveReview: async () => true,
+    canAssessGateA: async () => true,
+  };
+
   app.use(
     createEvidenceRouter(
       service,
       () => reviewerId,
-      () => organiserId
+      () => organiserId,
+      undefined,
+      testAuthorization
     )
   );
 
@@ -96,7 +110,7 @@ describe("P4 evidence coverage and Gate A readiness", () => {
     expect(response.status).toBe(200);
     expect(response.body.data.eligible).toBe(false);
     expect(response.body.data.reasons).toContain(
-      "Expense does not have approval from the specified reviewer."
+      "Evidence does not have approval from the specified reviewer."
     );
   });
 
@@ -109,6 +123,7 @@ describe("P4 evidence coverage and Gate A readiness", () => {
     await repo.createVerificationReview({
       id: "review-1",
       expenseId: "expense-1",
+      evidenceId: "evidence-1",
       flagType: "amount_differs",
       explanation: "Amount verified manually.",
       reviewerId: "reviewer-1",
@@ -139,6 +154,7 @@ describe("P4 evidence coverage and Gate A readiness", () => {
     await repo.createVerificationReview({
       id: "review-1",
       expenseId: "expense-1",
+      evidenceId: "evidence-1",
       flagType: "amount_differs",
       explanation: "Self-approved review.",
       reviewerId: "organiser-1",

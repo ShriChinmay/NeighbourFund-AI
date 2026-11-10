@@ -57,11 +57,14 @@ class InMemoryCompletionRepository
   }
 
   async getProofBySpecId(specId: string) {
-    return (
-      [...this.proofs.values()].find(
-        (item) => item.specId === specId
-      ) ?? null
-    );
+    return [...this.proofs.values()]
+      .filter((item) => item.specId === specId)
+      .reduce<ProofSubmission | null>((latest, item) => {
+        if (!latest || item.submittedAt.getTime() >= latest.submittedAt.getTime()) {
+          return item;
+        }
+        return latest;
+      }, null);
   }
 
   async createProofReview(review: ProofReview) {
@@ -205,6 +208,106 @@ describe("Completion Module", () => {
         windowDays: 7,
       })
     ).rejects.toThrow("already exists");
+  });
+
+  it("allows a new proof after the latest submission is rejected and preserves history", async () => {
+    const first = await service.submitProof(spec.id, {
+      fileRefs: ["proof/first.jpg"],
+      checklist: { lightsInstalled: false },
+    });
+
+    await service.createProofReview(first.id, "reviewer-1", {
+      decision: "rejected",
+      reason: "Installation is incomplete",
+    });
+
+    const second = await service.submitProof(spec.id, {
+      fileRefs: ["proof/second.jpg"],
+      checklist: { lightsInstalled: true },
+    });
+
+    expect(second.id).not.toBe(first.id);
+    expect(await repo.getProofById(first.id)).toEqual(first);
+    expect(await repo.getProofBySpecId(spec.id)).toEqual(second);
+    expect(await repo.getLatestProofReview(first.id)).toMatchObject({
+      decision: "rejected",
+      reason: "Installation is incomplete",
+    });
+  });
+
+  it("evaluates the latest resubmission rather than the previously rejected proof", async () => {
+    const first = await service.submitProof(spec.id, {
+      fileRefs: ["proof/first.jpg"],
+      checklist: { lightsInstalled: true },
+    });
+    await service.createProofReview(first.id, "reviewer-1", {
+      decision: "rejected",
+      reason: "First submission needs correction",
+    });
+
+    const second = await service.submitProof(spec.id, {
+      fileRefs: ["proof/second.jpg"],
+      checklist: { lightsInstalled: true },
+    });
+    await service.createProofReview(second.id, "reviewer-2", {
+      decision: "needs_more",
+      reason: "Latest submission needs clearer evidence",
+    });
+
+    const result = await service.getGateBEligibility(spec.id);
+    expect(result.proofApproved).toBe(false);
+    expect(result.eligible).toBe(false);
+  });
+
+  it("allows a new proof after a needs_more decision", async () => {
+    const first = await service.submitProof(spec.id, {
+      fileRefs: ["proof/first.jpg"],
+      checklist: { testingComplete: false },
+    });
+    await service.createProofReview(first.id, "reviewer-1", {
+      decision: "needs_more",
+      reason: "Provide testing evidence",
+    });
+
+    const second = await service.submitProof(spec.id, {
+      fileRefs: ["proof/second.jpg"],
+      checklist: { testingComplete: true },
+    });
+
+    expect(second.id).not.toBe(first.id);
+    expect(await repo.getProofBySpecId(spec.id)).toEqual(second);
+  });
+
+  it("blocks resubmission while the latest proof is awaiting review", async () => {
+    await service.submitProof(spec.id, {
+      fileRefs: ["proof/first.jpg"],
+      checklist: { lightsInstalled: true },
+    });
+
+    await expect(
+      service.submitProof(spec.id, {
+        fileRefs: ["proof/second.jpg"],
+        checklist: { lightsInstalled: true },
+      })
+    ).rejects.toThrow("awaiting review");
+  });
+
+  it("blocks resubmission after the latest proof is approved", async () => {
+    const proof = await service.submitProof(spec.id, {
+      fileRefs: ["proof/first.jpg"],
+      checklist: { lightsInstalled: true },
+    });
+    await service.createProofReview(proof.id, "reviewer-1", {
+      decision: "approved",
+      reason: "Completion verified",
+    });
+
+    await expect(
+      service.submitProof(spec.id, {
+        fileRefs: ["proof/second.jpg"],
+        checklist: { lightsInstalled: true },
+      })
+    ).rejects.toThrow("cannot be resubmitted");
   });
 
   it("submits valid completion proof", async () => {

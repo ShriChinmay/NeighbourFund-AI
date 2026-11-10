@@ -16,15 +16,66 @@ const attestationLinksSchema = z.object({
 }).strict();
 
 /**
- * This resolver must obtain identity from trusted authentication
- * middleware or a verified server-side session.
+ * Identity must come from trusted authentication middleware
+ * or a verified server-side session.
  *
- * Never obtain reviewer identity from req.body or an
- * unverified request header.
+ * Never trust identities from request bodies,
+ * query parameters, or arbitrary headers.
  */
-export type ReviewerIdentityResolver = (
+export type TrustedIdentityResolver = (
   req: Request
 ) => string | null;
+
+/**
+ * Completion authorization boundary.
+ *
+ * P3 will provide actual identity resolution and permission
+ * callbacks when its authentication module is implemented.
+ */
+export interface CompletionAuthorization {
+  resolveOrganiserIdentity: TrustedIdentityResolver;
+  resolveSubmitterIdentity: TrustedIdentityResolver;
+  resolveReviewerIdentity: TrustedIdentityResolver;
+  resolveViewerIdentity: TrustedIdentityResolver;
+
+  canManageMilestone: (
+    userId: string,
+    milestoneId: string
+  ) => Promise<boolean>;
+
+  canSubmitProof: (
+    userId: string,
+    resourceId: string
+  ) => Promise<boolean>;
+
+  canReviewProof: (
+    userId: string,
+    milestoneId: string
+  ) => Promise<boolean>;
+
+  canViewMilestone: (
+    userId: string,
+    milestoneId: string
+  ) => Promise<boolean>;
+}
+
+/**
+ * Secure default.
+ *
+ * No protected Completion operation is authorized
+ * until trusted P3 authentication is connected.
+ */
+export const denyAllCompletionAuthorization: CompletionAuthorization = {
+  resolveOrganiserIdentity: () => null,
+  resolveSubmitterIdentity: () => null,
+  resolveReviewerIdentity: () => null,
+  resolveViewerIdentity: () => null,
+
+  canManageMilestone: async () => false,
+  canSubmitProof: async () => false,
+  canReviewProof: async () => false,
+  canViewMilestone: async () => false,
+};
 
 function getRouteParam(
   value: string | string[] | undefined
@@ -51,16 +102,71 @@ function sendError(
 
 export function createCompletionRouter(
   service: CompletionService,
-  resolveReviewerIdentity: ReviewerIdentityResolver = () => null
+  authorization: CompletionAuthorization =
+    denyAllCompletionAuthorization
 ) {
   const router = Router();
 
+  /**
+   * Checks trusted identity and resource permission.
+   */
+  async function authorize(
+    res: Response,
+    req: Request,
+    resolver: TrustedIdentityResolver,
+    permissionCheck: (
+      userId: string,
+      resourceId: string
+    ) => Promise<boolean>,
+    resourceId: string
+  ): Promise<boolean> {
+    const userId = resolver(req);
+
+    if (!userId || !userId.trim()) {
+      res.status(401).json({
+        success: false,
+        message: "Authenticated identity is required.",
+      });
+
+      return false;
+    }
+
+    const allowed = await permissionCheck(
+      userId,
+      resourceId
+    );
+
+    if (!allowed) {
+      res.status(403).json({
+        success: false,
+        message: "You are not authorized to perform this action.",
+      });
+
+      return false;
+    }
+
+    return true;
+  }
+
+  // --------------------------------------------------
   // Create completion specification
+  // --------------------------------------------------
+
   router.post(
     "/milestones/:id/completion-spec",
     async (req: Request, res: Response) => {
       try {
         const milestoneId = getRouteParam(req.params.id);
+
+        const authorized = await authorize(
+          res,
+          req,
+          authorization.resolveOrganiserIdentity,
+          authorization.canManageMilestone,
+          milestoneId
+        );
+
+        if (!authorized) return;
 
         const parsed = createCompletionSpecSchema.safeParse({
           ...req.body,
@@ -88,12 +194,25 @@ export function createCompletionRouter(
     }
   );
 
+  // --------------------------------------------------
   // Retrieve completion specification
+  // --------------------------------------------------
+
   router.get(
     "/milestones/:id/completion-spec",
     async (req: Request, res: Response) => {
       try {
         const milestoneId = getRouteParam(req.params.id);
+
+        const authorized = await authorize(
+          res,
+          req,
+          authorization.resolveViewerIdentity,
+          authorization.canViewMilestone,
+          milestoneId
+        );
+
+        if (!authorized) return;
 
         const spec = await service.getCompletionSpec(
           milestoneId
@@ -116,12 +235,25 @@ export function createCompletionRouter(
     }
   );
 
+  // --------------------------------------------------
   // Submit completion proof
+  // --------------------------------------------------
+
   router.post(
     "/milestones/:id/proof",
     async (req: Request, res: Response) => {
       try {
-        const specId = getRouteParam(req.params.id);
+        const resourceId = getRouteParam(req.params.id);
+
+        const authorized = await authorize(
+          res,
+          req,
+          authorization.resolveSubmitterIdentity,
+          authorization.canSubmitProof,
+          resourceId
+        );
+
+        if (!authorized) return;
 
         const parsed = createProofSubmissionSchema.safeParse(
           req.body
@@ -135,7 +267,7 @@ export function createCompletionRouter(
         }
 
         const proof = await service.submitProof(
-          specId,
+          resourceId,
           parsed.data
         );
 
@@ -149,12 +281,25 @@ export function createCompletionRouter(
     }
   );
 
+  // --------------------------------------------------
   // Generate household attestation links
+  // --------------------------------------------------
+
   router.post(
     "/milestones/:id/attestation-links",
     async (req: Request, res: Response) => {
       try {
         const specId = getRouteParam(req.params.id);
+
+        const authorized = await authorize(
+          res,
+          req,
+          authorization.resolveOrganiserIdentity,
+          authorization.canManageMilestone,
+          specId
+        );
+
+        if (!authorized) return;
 
         const parsed = attestationLinksSchema.safeParse(
           req.body
@@ -182,7 +327,10 @@ export function createCompletionRouter(
     }
   );
 
-  // Retrieve public attestation page data
+  // --------------------------------------------------
+  // Public attestation token lookup
+  // --------------------------------------------------
+
   router.get(
     "/attest/:token",
     async (req: Request, res: Response) => {
@@ -206,7 +354,10 @@ export function createCompletionRouter(
     }
   );
 
-  // Submit household attestation response
+  // --------------------------------------------------
+  // Public household attestation submission
+  // --------------------------------------------------
+
   router.post(
     "/attest/:token",
     async (req: Request, res: Response) => {
@@ -243,14 +394,19 @@ export function createCompletionRouter(
     }
   );
 
+  // --------------------------------------------------
   // Reviewer decision on completion proof
+  // --------------------------------------------------
+
   router.post(
     "/milestones/:id/proof/decision",
     async (req: Request, res: Response) => {
       try {
-        const reviewerId = resolveReviewerIdentity(req);
+        const milestoneId = getRouteParam(req.params.id);
 
-        // Fail closed until trusted authentication is configured.
+        const reviewerId =
+          authorization.resolveReviewerIdentity(req);
+
         if (!reviewerId || !reviewerId.trim()) {
           return res.status(401).json({
             success: false,
@@ -258,7 +414,17 @@ export function createCompletionRouter(
           });
         }
 
-        const milestoneId = getRouteParam(req.params.id);
+        const allowed = await authorization.canReviewProof(
+          reviewerId,
+          milestoneId
+        );
+
+        if (!allowed) {
+          return res.status(403).json({
+            success: false,
+            message: "You are not authorized to review this proof.",
+          });
+        }
 
         const parsed = createProofReviewSchema.safeParse(
           req.body
@@ -309,15 +475,28 @@ export function createCompletionRouter(
     }
   );
 
+  // --------------------------------------------------
   // Check Gate B eligibility
+  // --------------------------------------------------
+
   router.get(
     "/milestones/:id/gate-b/eligibility",
     async (req: Request, res: Response) => {
       try {
-        const identifier = getRouteParam(req.params.id);
+        const milestoneId = getRouteParam(req.params.id);
+
+        const authorized = await authorize(
+          res,
+          req,
+          authorization.resolveViewerIdentity,
+          authorization.canViewMilestone,
+          milestoneId
+        );
+
+        if (!authorized) return;
 
         const result = await service.getGateBEligibility(
-          identifier
+          milestoneId
         );
 
         return res.status(200).json({

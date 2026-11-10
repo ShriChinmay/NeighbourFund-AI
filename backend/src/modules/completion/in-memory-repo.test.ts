@@ -156,21 +156,26 @@ describe("InMemoryCompletionRepository", () => {
       );
     });
 
-    it("rejects multiple proofs for the same specification", async () => {
+    it("preserves multiple proof submissions for the same specification and returns the latest", async () => {
       const repo = new InMemoryCompletionRepository();
-
       await repo.createSpec(createSpec());
-      await repo.createProof(createProof());
 
-      await expect(
-        repo.createProof(
-          createProof({
-            id: "proof-2",
-          })
-        )
-      ).rejects.toThrow(
-        "A proof submission already exists for this completion specification."
-      );
+      const first = createProof({
+        id: "proof-1",
+        submittedAt: new Date("2026-01-01T10:00:00.000Z"),
+      });
+      const second = createProof({
+        id: "proof-2",
+        fileRefs: ["proof-image-2.png"],
+        submittedAt: new Date("2026-01-02T10:00:00.000Z"),
+      });
+
+      await repo.createProof(first);
+      await repo.createProof(second);
+
+      expect(await repo.getProofById(first.id)).toEqual(first);
+      expect(await repo.getProofById(second.id)).toEqual(second);
+      expect(await repo.getProofBySpecId(first.specId)).toEqual(second);
     });
   });
 

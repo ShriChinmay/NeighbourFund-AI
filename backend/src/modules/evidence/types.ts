@@ -1,3 +1,4 @@
+
 export type EvidenceStatus =
   | "uploaded"
   | "processing"
@@ -34,20 +35,15 @@ export interface EvidenceRecord {
   milestoneId?: string;
   expenseId?: string;
   uploadedBy: string;
-
   originalFileName: string;
   storageKey: string;
   mimeType: EvidenceFileType;
   fileSize: number;
-
   status: EvidenceStatus;
-
   extractedMetadata?: InvoiceMetadata;
   confirmedMetadata?: InvoiceMetadata;
-
   confidence?: Record<string, number>;
   extractionProvider?: string;
-
   uploadedAt: Date;
   updatedAt: Date;
 }
@@ -57,7 +53,6 @@ export interface CreateEvidenceInput {
   milestoneId?: string;
   expenseId?: string;
   uploadedBy: string;
-
   originalFileName: string;
   storageKey: string;
   mimeType: EvidenceFileType;
@@ -107,17 +102,26 @@ export interface ExpenseRecord {
   updatedAt: Date;
 }
 
+export type EvidenceFlagStatus = "active" | "superseded";
+
 export interface EvidenceFlag {
   id: string;
   expenseId: string;
+  /** The evidence document that generated this discrepancy. */
+  evidenceId?: string;
   flagType: FlagType;
   explanation: string;
+  status?: EvidenceFlagStatus;
   createdAt: Date;
+  supersededAt?: Date;
+  supersededReason?: string;
 }
 
 export interface VerificationReview {
   id: string;
   expenseId: string;
+  /** The evidence document this review belongs to. */
+  evidenceId?: string;
   flagType: FlagType;
   explanation: string;
   reviewerId?: string;
@@ -125,4 +129,21 @@ export interface VerificationReview {
   reason?: string;
   createdAt: Date;
   updatedAt: Date;
+  status?: "active" | "superseded";
+  supersededAt?: Date;
+  supersededReason?: string;
+}
+
+export interface VerificationReviewAuditEvent {
+  id: string;
+  reviewId: string;
+  expenseId: string;
+  evidenceId?: string;
+  reviewerId?: string;
+  previousResolution?: ReviewResolution;
+  newResolution?: ReviewResolution;
+  previousReason?: string;
+  newReason?: string;
+  action: "created" | "updated" | "superseded";
+  createdAt: Date;
 }
