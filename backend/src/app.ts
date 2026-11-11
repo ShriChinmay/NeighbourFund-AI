@@ -1,9 +1,10 @@
-﻿import express, { type ErrorRequestHandler } from "express";
+import express, { type ErrorRequestHandler } from "express";
 import cors from "cors";
 import helmet from "helmet";
 import { optionalAuth } from "./modules/platform/auth/session.js";
 import { authRouter } from "./modules/platform/auth/routes.js";
 import { projectsRouter } from "./modules/platform/projects/routes.js";
+import { fundingRouter } from "./modules/platform/funding/routes.js";
 
 export function createApp() {
   const app = express();
@@ -23,6 +24,7 @@ export function createApp() {
 
   app.use("/api", optionalAuth, authRouter);
   app.use("/api", optionalAuth, projectsRouter);
+  app.use("/api", optionalAuth, fundingRouter);
   app.use((_req, res) => {
     res.status(404).json({ error: { code: "NOT_FOUND", message: "Route not found" } });
   });
