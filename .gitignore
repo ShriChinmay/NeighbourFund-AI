@@ -6,3 +6,4 @@ coverage/
 !.env.example
 *.log
 .DS_Store
+backend/src/app.ts.before-auth
