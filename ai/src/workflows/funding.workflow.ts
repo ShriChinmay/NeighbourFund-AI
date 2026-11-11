@@ -1,0 +1,82 @@
+
+import { randomUUID } from "node:crypto";
+
+export interface FundingInput {
+  goalMinor: number;
+  lines: {
+    sourceType: string;
+    amountMinor: number;
+    rationale: string;
+    risks: string[];
+  }[];
+}
+
+export interface FundingResult {
+  lines: FundingInput["lines"];
+}
+
+export type FundingAiResult =
+  | {
+      ok: true;
+      data: FundingResult;
+      runId: string;
+      validated: true;
+    }
+  | {
+      ok: false;
+      reason: "invalid_output" | "provider_error";
+      runId: string;
+    };
+
+export function planFundingMix(
+  input: FundingInput
+): FundingAiResult {
+  const runId = `fake-a4-${randomUUID()}`;
+
+  if (
+    !input ||
+    !Number.isSafeInteger(input.goalMinor) ||
+    input.goalMinor < 0 ||
+    !Array.isArray(input.lines) ||
+    input.lines.length === 0
+  ) {
+    return { ok: false, reason: "invalid_output", runId };
+  }
+
+  for (const line of input.lines) {
+    if (
+      !line ||
+      typeof line.sourceType !== "string" ||
+      !line.sourceType.trim() ||
+      !Number.isSafeInteger(line.amountMinor) ||
+      line.amountMinor < 0 ||
+      typeof line.rationale !== "string" ||
+      !line.rationale.trim() ||
+      !Array.isArray(line.risks) ||
+      !line.risks.every((risk) => typeof risk === "string")
+    ) {
+      return { ok: false, reason: "invalid_output", runId };
+    }
+
+    // In-kind contributions cannot be counted as cash.
+    if (line.sourceType.toLowerCase() === "in-kind" && line.amountMinor > 0) {
+      return { ok: false, reason: "invalid_output", runId };
+    }
+  }
+
+  const total = input.lines.reduce(
+    (sum, line) => sum + line.amountMinor,
+    0
+  );
+
+  if (!Number.isSafeInteger(total) || total !== input.goalMinor) {
+    return { ok: false, reason: "invalid_output", runId };
+  }
+
+  return {
+    ok: true,
+    data: { lines: input.lines },
+    runId,
+    validated: true,
+  };
+}
