@@ -1,14 +1,20 @@
 {
   "name": "neighbourfund-ai",
+  "version": "1.0.0",
   "private": true,
-  "version": "0.1.0",
+  "description": "AI-powered community funding and accountability platform",
   "workspaces": [
     "backend",
     "frontend",
     "ai",
-    "shared/*"
+    "packages/*",
+    "shared/money"
   ],
   "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
     "dev:api": "npm run dev -w @neighbourfund/backend",
     "build:api": "npm run build -w @neighbourfund/backend",
     "typecheck:api": "npm run typecheck -w @neighbourfund/backend",
