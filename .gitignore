@@ -7,3 +7,6 @@ coverage/
 *.log
 .DS_Store
 backend/src/app.ts.before-auth
+
+# TypeScript incremental build metadata
+*.tsbuildinfo
