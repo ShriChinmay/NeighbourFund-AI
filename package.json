@@ -2,12 +2,21 @@
   "name": "neighbourfund-ai",
   "private": true,
   "version": "0.1.0",
-  "workspaces": ["backend", "frontend", "ai", "shared/*"],
+  "workspaces": [
+    "backend",
+    "frontend",
+    "ai",
+    "shared/*"
+  ],
   "scripts": {
     "dev:api": "npm run dev -w @neighbourfund/backend",
     "build:api": "npm run build -w @neighbourfund/backend",
     "typecheck:api": "npm run typecheck -w @neighbourfund/backend",
-    "test:api": "npm run test -w @neighbourfund/backend"
+    "test:api": "npm run test -w @neighbourfund/backend",
+    "db:migrate": "tsx backend/scripts/migrate.ts",
+    "db:check": "tsx backend/scripts/db-check.ts"
   },
-  "engines": { "node": ">=22" }
+  "engines": {
+    "node": ">=22"
+  }
 }
