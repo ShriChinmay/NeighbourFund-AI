@@ -18,6 +18,9 @@ describe("Evidence Upload Routes", () => {
 
   const testAuthorization: EvidenceAuthorization = {
     canUpload: async () => true,
+    canReadEvidence: async () => true,
+    canReadProject: async () => true,
+    canExtract: async () => true,
     canReview: async () => true,
     canAccessReviewQueue: async () => true,
     canResolveReview: async () => true,
@@ -137,6 +140,9 @@ describe("Evidence Upload Routes", () => {
       canAccessReviewQueue: async () => false,
       canResolveReview: async () => false,
       canAssessGateA: async () => false,
+      canReadEvidence: async () => false,
+      canReadProject: async () => false,
+      canExtract: async () => false,
     };
 
     const deniedApp = express();
@@ -162,5 +168,83 @@ describe("Evidence Upload Routes", () => {
 
     expect(response.status).toBe(403);
     expect(response.body.success).toBe(false);
+  });
+
+  
+  it("blocks unauthorized evidence reads, project access, and invoice extraction", async () => {
+    const repository = new InMemoryEvidenceRepository();
+    const service = new EvidenceService(repository);
+
+    const readDeniedAuthorization: EvidenceAuthorization = {
+      ...testAuthorization,
+      canReadEvidence: async () => false,
+      canReadProject: async () => false,
+      canExtract: async () => false,
+    };
+
+    const deniedApp = express();
+    deniedApp.use(express.json());
+    deniedApp.use(
+      "/api",
+      createEvidenceRouter(
+        service,
+        undefined,
+        undefined,
+        () => "trusted-uploader-1",
+        readDeniedAuthorization
+      )
+    );
+
+    const evidenceResponse = await request(deniedApp)
+      .get("/api/evidence/evidence-1");
+
+    const documentResponse = await request(deniedApp)
+      .get("/api/documents/evidence-1");
+
+    const projectEvidenceResponse = await request(deniedApp)
+      .get("/api/projects/project-1/evidence");
+
+    const expensesResponse = await request(deniedApp)
+      .get("/api/projects/project-1/expenses");
+
+    const coverageResponse = await request(deniedApp)
+      .get("/api/projects/project-1/evidence-coverage");
+
+    const extractionResponse = await request(deniedApp)
+      .post("/api/evidence/evidence-1/extract");
+
+    expect(evidenceResponse.status).toBe(403);
+    expect(documentResponse.status).toBe(403);
+    expect(projectEvidenceResponse.status).toBe(403);
+    expect(expensesResponse.status).toBe(403);
+    expect(coverageResponse.status).toBe(403);
+    expect(extractionResponse.status).toBe(403);
+  });
+
+  it("denies protected read and extraction routes by default", async () => {
+    const repository = new InMemoryEvidenceRepository();
+    const service = new EvidenceService(repository);
+
+    const defaultDeniedApp = express();
+    defaultDeniedApp.use(express.json());
+
+    // No authorization provider is supplied.
+    defaultDeniedApp.use(
+      "/api",
+      createEvidenceRouter(service)
+    );
+
+    const evidenceResponse = await request(defaultDeniedApp)
+      .get("/api/evidence/evidence-1");
+
+    const projectResponse = await request(defaultDeniedApp)
+      .get("/api/projects/project-1/evidence");
+
+    const extractionResponse = await request(defaultDeniedApp)
+      .post("/api/evidence/evidence-1/extract");
+
+    expect(evidenceResponse.status).toBe(403);
+    expect(projectResponse.status).toBe(403);
+    expect(extractionResponse.status).toBe(403);
   });
 });

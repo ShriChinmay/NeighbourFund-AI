@@ -25,6 +25,9 @@ function setup(
     canAccessReviewQueue: async () => true,
     canResolveReview: async () => true,
     canAssessGateA: async () => true,
+    canReadEvidence: async () => false,
+    canReadProject: async () => true,
+    canExtract: async () => false,
   };
 
   app.use(

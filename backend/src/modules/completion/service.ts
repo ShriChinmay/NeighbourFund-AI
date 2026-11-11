@@ -250,7 +250,7 @@ export class CompletionService {
     }
 
     if (!input.reason || !input.reason.trim()) {
-      throw new Error("Review reason is required.");
+      throw new Error("Proof review reason is required.");
     }
 
     const review: ProofReview = {
@@ -414,16 +414,25 @@ export class CompletionService {
       throw new Error("Invalid attestation response.");
     }
 
+    // Validate the token, including its expiry and usage status.
     const attestation =
       await this.getAttestationByToken(token);
 
-    const updated: Attestation = {
-      ...attestation,
+    // Redeem atomically. Only one request can successfully
+    // change an unused attestation into a used attestation.
+    const redeemed = await this.repo.redeemAttestation(
+      attestation.id,
       response,
-      usedAt: new Date(),
-    };
+      new Date()
+    );
 
-    return this.repo.updateAttestation(updated);
+    if (!redeemed) {
+      throw new Error(
+        "Attestation link has already been used or expired."
+      );
+    }
+
+    return redeemed;
   }
 
   // 9. Evaluate Gate B eligibility

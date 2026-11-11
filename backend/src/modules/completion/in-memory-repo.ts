@@ -127,6 +127,42 @@ export class InMemoryCompletionRepository implements CompletionRepository {
     return [...this.attestations.values()].filter((item) => item.specId === specId);
   }
 
+  async redeemAttestation(
+    id: string,
+    response: "works" | "not_working",
+    now: Date
+  ): Promise<Attestation | null> {
+    const existing = this.attestations.get(id);
+
+    // Attestation must exist.
+    if (!existing) {
+      return null;
+    }
+
+    // Reject expired attestations.
+    if (existing.expiresAt.getTime() <= now.getTime()) {
+      return null;
+    }
+
+    // Reject duplicate or previously completed redemption.
+    if (existing.usedAt || existing.response) {
+      return null;
+    }
+
+    const redeemed: Attestation = {
+      ...existing,
+      response,
+      usedAt: now,
+    };
+
+    // No await between checking and updating:
+    // this operation is atomic within this in-memory repository
+    // under JavaScript's single-threaded execution model.
+    this.attestations.set(id, redeemed);
+
+    return redeemed;
+  }
+
   async updateAttestation(attestation: Attestation): Promise<Attestation> {
     const existing = this.attestations.get(attestation.id);
     if (!existing) throw new Error("Attestation not found.");

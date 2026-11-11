@@ -1,3 +1,4 @@
+
 import { Router } from "express";
 import type { Request, Response } from "express";
 import { z } from "zod";
@@ -289,14 +290,15 @@ export function createCompletionRouter(
     "/milestones/:id/attestation-links",
     async (req: Request, res: Response) => {
       try {
-        const specId = getRouteParam(req.params.id);
+        const milestoneId = getRouteParam(req.params.id);
 
+        // Authorize against the actual milestone ID.
         const authorized = await authorize(
           res,
           req,
           authorization.resolveOrganiserIdentity,
           authorization.canManageMilestone,
-          specId
+          milestoneId
         );
 
         if (!authorized) return;
@@ -312,8 +314,21 @@ export function createCompletionRouter(
           });
         }
 
+        // Resolve the completion specification belonging
+        // to this milestone before generating attestation links.
+        const spec = await service.getCompletionSpec(
+          milestoneId
+        );
+
+        if (!spec) {
+          return res.status(404).json({
+            success: false,
+            message: "Completion specification not found for this milestone.",
+          });
+        }
+
         const links = await service.generateAttestationLinks(
-          specId,
+          spec.id,
           parsed.data.householdIds
         );
 

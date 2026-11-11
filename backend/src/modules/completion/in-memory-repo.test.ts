@@ -436,4 +436,89 @@ describe("InMemoryCompletionRepository", () => {
       ).rejects.toThrow("Attestation not found.");
     });
   });
+  
+it("successfully redeems an unused attestation", async () => {
+  const repo = new InMemoryCompletionRepository();
+  await repo.createSpec(createSpec());
+
+  const original = createAttestation();
+  await repo.createAttestation(original);
+
+  const now = new Date();
+
+  const result = await repo.redeemAttestation(
+    original.id,
+    "works",
+    now
+  );
+
+  expect(result).not.toBeNull();
+  expect(result?.response).toBe("works");
+  expect(result?.usedAt).toEqual(now);
+});
+
+it("rejects a second redemption of the same attestation", async () => {
+  const repo = new InMemoryCompletionRepository();
+  await repo.createSpec(createSpec());
+
+  const original = createAttestation();
+  await repo.createAttestation(original);
+
+  const now = new Date();
+
+  const first = await repo.redeemAttestation(
+    original.id,
+    "works",
+    now
+  );
+
+  const second = await repo.redeemAttestation(
+    original.id,
+    "not_working",
+    now
+  );
+
+  expect(first).not.toBeNull();
+  expect(second).toBeNull();
+});
+
+it("rejects redemption of an expired attestation", async () => {
+  const repo = new InMemoryCompletionRepository();
+  await repo.createSpec(createSpec());
+
+  const original = createAttestation({
+    expiresAt: new Date("2026-01-01T00:00:00.000Z"),
+  });
+
+  await repo.createAttestation(original);
+
+  const result = await repo.redeemAttestation(
+    original.id,
+    "works",
+    new Date("2026-01-02T00:00:00.000Z")
+  );
+
+  expect(result).toBeNull();
+});
+
+it("allows only one of two concurrent redemption attempts", async () => {
+  const repo = new InMemoryCompletionRepository();
+  await repo.createSpec(createSpec());
+
+  const original = createAttestation();
+  await repo.createAttestation(original);
+
+  const now = new Date();
+
+  const results = await Promise.all([
+    repo.redeemAttestation(original.id, "works", now),
+    repo.redeemAttestation(original.id, "not_working", now),
+  ]);
+
+  const successfulRedemptions = results.filter(
+    (result) => result !== null
+  );
+
+  expect(successfulRedemptions).toHaveLength(1);
+});
 });

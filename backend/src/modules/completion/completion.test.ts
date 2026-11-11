@@ -140,6 +140,35 @@ class InMemoryCompletionRepository
       (item) => item.specId === specId
     );
   }
+  async redeemAttestation(
+    id: string,
+    response: "works" | "not_working",
+    now: Date
+  ): Promise<Attestation | null> {
+    const existing = this.attestations.get(id);
+
+    if (!existing) {
+      return null;
+    }
+
+    if (existing.expiresAt.getTime() <= now.getTime()) {
+      return null;
+    }
+
+    if (existing.usedAt || existing.response) {
+      return null;
+    }
+
+    const redeemed: Attestation = {
+      ...existing,
+      response,
+      usedAt: now,
+    };
+
+    this.attestations.set(id, redeemed);
+
+    return redeemed;
+  }
 
   async updateAttestation(attestation: Attestation) {
     this.attestations.set(attestation.id, attestation);

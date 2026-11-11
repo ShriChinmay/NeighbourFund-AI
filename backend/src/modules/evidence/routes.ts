@@ -54,6 +54,21 @@ export interface EvidenceAuthorization {
     expenseId?: string
   ): boolean | Promise<boolean>;
 
+  canReadEvidence(
+    req: Request,
+    evidenceId: string
+  ): boolean | Promise<boolean>;
+
+  canReadProject(
+    req: Request,
+    projectId: string
+  ): boolean | Promise<boolean>;
+
+  canExtract(
+    req: Request,
+    evidenceId: string
+  ): boolean | Promise<boolean>;
+
   canReview(
     req: Request,
     evidenceId: string
@@ -77,8 +92,15 @@ export interface EvidenceAuthorization {
   ): boolean | Promise<boolean>;
 }
 
+// --------------------------------------------------
+// Deny-by-default authorization
+// --------------------------------------------------
+
 export const denyAllEvidenceAuthorization: EvidenceAuthorization = {
   canUpload: () => false,
+  canReadEvidence: () => false,
+  canReadProject: () => false,
+  canExtract: () => false,
   canReview: () => false,
   canAccessReviewQueue: () => false,
   canResolveReview: () => false,
@@ -113,6 +135,20 @@ function sendError(res: Response, error: unknown) {
   return res.status(400).json({
     success: false,
     message: error instanceof Error ? error.message : "Request failed.",
+  });
+}
+
+function unauthorized(res: Response, message: string) {
+  return res.status(403).json({
+    success: false,
+    message,
+  });
+}
+
+function unauthenticated(res: Response, message: string) {
+  return res.status(401).json({
+    success: false,
+    message,
   });
 }
 
@@ -278,7 +314,7 @@ export function createEvidenceRouter(
   const router = Router();
 
   // --------------------------------------------------
-  // Shared upload handler
+  // 1. Shared upload handler
   // --------------------------------------------------
 
   const createUploadHandler = (requireMilestone: boolean) =>
@@ -299,7 +335,7 @@ export function createEvidenceRouter(
 
         uploadedFilePath = req.file.path;
 
-        // Validate the public request before authentication/authorization.
+        // Validate the public request.
         // Client-supplied uploadedBy and storageKey are deliberately ignored.
         const parsed = createEvidenceRequestSchema.safeParse({
           projectId: req.body.projectId,
@@ -325,10 +361,10 @@ export function createEvidenceRouter(
         if (!uploaderId || !uploaderId.trim()) {
           await removeUploadedFile(uploadedFilePath);
 
-          return res.status(401).json({
-            success: false,
-            message: "Authenticated uploader identity is required.",
-          });
+          return unauthenticated(
+            res,
+            "Authenticated uploader identity is required."
+          );
         }
 
         const { projectId, expenseId } = parsed.data;
@@ -343,10 +379,10 @@ export function createEvidenceRouter(
         if (!allowed) {
           await removeUploadedFile(uploadedFilePath);
 
-          return res.status(403).json({
-            success: false,
-            message: "You are not authorized to upload evidence for this project.",
-          });
+          return unauthorized(
+            res,
+            "You are not authorized to upload evidence for this project."
+          );
         }
 
         // Validate actual file bytes, not only the MIME header.
@@ -398,7 +434,7 @@ export function createEvidenceRouter(
     };
 
   // --------------------------------------------------
-  // 1. Upload document for a milestone
+  // 2. Upload document for a milestone
   // POST /milestones/:id/documents
   // --------------------------------------------------
 
@@ -409,7 +445,7 @@ export function createEvidenceRouter(
   );
 
   // --------------------------------------------------
-  // 2. Upload evidence
+  // 3. Upload evidence
   // POST /evidence
   // --------------------------------------------------
 
@@ -420,13 +456,21 @@ export function createEvidenceRouter(
   );
 
   // --------------------------------------------------
-  // 3. Retrieve one evidence record
+  // 4. Retrieve one evidence record
   // GET /evidence/:id
   // --------------------------------------------------
 
   router.get("/evidence/:id", async (req: Request, res: Response) => {
     try {
       const id = getRouteParam(req.params.id);
+
+      if (!(await authorization.canReadEvidence(req, id))) {
+        return unauthorized(
+          res,
+          "You are not authorized to access this evidence."
+        );
+      }
+
       const evidence = await service.getEvidenceById(id);
 
       return res.status(200).json({
@@ -439,13 +483,21 @@ export function createEvidenceRouter(
   });
 
   // --------------------------------------------------
-  // 4. Retrieve document by ID
+  // 5. Retrieve document by ID
   // GET /documents/:id
   // --------------------------------------------------
 
   router.get("/documents/:id", async (req: Request, res: Response) => {
     try {
       const id = getRouteParam(req.params.id);
+
+      if (!(await authorization.canReadEvidence(req, id))) {
+        return unauthorized(
+          res,
+          "You are not authorized to access this document."
+        );
+      }
+
       const evidence = await service.getEvidenceById(id);
 
       return res.status(200).json({
@@ -458,7 +510,7 @@ export function createEvidenceRouter(
   });
 
   // --------------------------------------------------
-  // 5. List evidence for a project
+  // 6. List evidence for a project
   // GET /projects/:projectId/evidence
   // --------------------------------------------------
 
@@ -467,6 +519,14 @@ export function createEvidenceRouter(
     async (req: Request, res: Response) => {
       try {
         const projectId = getRouteParam(req.params.projectId);
+
+        if (!(await authorization.canReadProject(req, projectId))) {
+          return unauthorized(
+            res,
+            "You are not authorized to access this project's evidence."
+          );
+        }
+
         const evidence = await service.getEvidenceByProject(projectId);
 
         return res.status(200).json({
@@ -480,7 +540,7 @@ export function createEvidenceRouter(
   );
 
   // --------------------------------------------------
-  // 6. List expenses for a project
+  // 7. List expenses for a project
   // GET /projects/:projectId/expenses
   // --------------------------------------------------
 
@@ -489,6 +549,14 @@ export function createEvidenceRouter(
     async (req: Request, res: Response) => {
       try {
         const projectId = getRouteParam(req.params.projectId);
+
+        if (!(await authorization.canReadProject(req, projectId))) {
+          return unauthorized(
+            res,
+            "You are not authorized to access this project's expenses."
+          );
+        }
+
         const expenses = await service.getExpensesByProject(projectId);
 
         return res.status(200).json({
@@ -502,7 +570,7 @@ export function createEvidenceRouter(
   );
 
   // --------------------------------------------------
-  // 7. Run invoice metadata extraction
+  // 8. Run invoice metadata extraction
   // POST /evidence/:id/extract
   // --------------------------------------------------
 
@@ -511,6 +579,14 @@ export function createEvidenceRouter(
     async (req: Request, res: Response) => {
       try {
         const id = getRouteParam(req.params.id);
+
+        if (!(await authorization.canExtract(req, id))) {
+          return unauthorized(
+            res,
+            "You are not authorized to extract metadata from this evidence."
+          );
+        }
+
         const evidence = await service.extractInvoiceMetadata(id);
 
         return res.status(200).json({
@@ -524,7 +600,7 @@ export function createEvidenceRouter(
   );
 
   // --------------------------------------------------
-  // 8. Confirm or correct extracted metadata
+  // 9. Confirm or correct extracted metadata
   // PATCH /evidence/:id/metadata
   // --------------------------------------------------
 
@@ -536,17 +612,17 @@ export function createEvidenceRouter(
         const reviewerId = resolveReviewerIdentity(req);
 
         if (!reviewerId || !reviewerId.trim()) {
-          return res.status(401).json({
-            success: false,
-            message: "Authenticated reviewer identity is required.",
-          });
+          return unauthenticated(
+            res,
+            "Authenticated reviewer identity is required."
+          );
         }
 
         if (!(await authorization.canReview(req, id))) {
-          return res.status(403).json({
-            success: false,
-            message: "You are not authorized to review this evidence.",
-          });
+          return unauthorized(
+            res,
+            "You are not authorized to review this evidence."
+          );
         }
 
         const parsed = updateEvidenceMetadataSchema.safeParse(req.body);
@@ -574,7 +650,7 @@ export function createEvidenceRouter(
   );
 
   // --------------------------------------------------
-  // 9. Confirm document metadata
+  // 10. Confirm document metadata
   // POST /documents/:id/confirm
   // --------------------------------------------------
 
@@ -586,17 +662,17 @@ export function createEvidenceRouter(
         const reviewerId = resolveReviewerIdentity(req);
 
         if (!reviewerId || !reviewerId.trim()) {
-          return res.status(401).json({
-            success: false,
-            message: "Authenticated reviewer identity is required.",
-          });
+          return unauthenticated(
+            res,
+            "Authenticated reviewer identity is required."
+          );
         }
 
         if (!(await authorization.canReview(req, id))) {
-          return res.status(403).json({
-            success: false,
-            message: "You are not authorized to review this evidence.",
-          });
+          return unauthorized(
+            res,
+            "You are not authorized to review this evidence."
+          );
         }
 
         const parsed = updateEvidenceMetadataSchema.safeParse(req.body);
@@ -624,7 +700,7 @@ export function createEvidenceRouter(
   );
 
   // --------------------------------------------------
-  // 10. Reject evidence
+  // 11. Reject evidence
   // POST /evidence/:id/reject
   // --------------------------------------------------
 
@@ -636,17 +712,17 @@ export function createEvidenceRouter(
         const reviewerId = resolveReviewerIdentity(req);
 
         if (!reviewerId || !reviewerId.trim()) {
-          return res.status(401).json({
-            success: false,
-            message: "Authenticated reviewer identity is required.",
-          });
+          return unauthenticated(
+            res,
+            "Authenticated reviewer identity is required."
+          );
         }
 
         if (!(await authorization.canReview(req, id))) {
-          return res.status(403).json({
-            success: false,
-            message: "You are not authorized to review this evidence.",
-          });
+          return unauthorized(
+            res,
+            "You are not authorized to review this evidence."
+          );
         }
 
         const evidence = await service.rejectEvidence(id);
@@ -662,7 +738,7 @@ export function createEvidenceRouter(
   );
 
   // --------------------------------------------------
-  // 11. Retrieve unresolved reviewer queue
+  // 12. Retrieve unresolved reviewer queue
   // GET /projects/:projectId/review-queue
   // --------------------------------------------------
 
@@ -673,19 +749,19 @@ export function createEvidenceRouter(
         const reviewerId = resolveReviewerIdentity(req);
 
         if (!reviewerId || !reviewerId.trim()) {
-          return res.status(401).json({
-            success: false,
-            message: "Authenticated reviewer identity is required.",
-          });
+          return unauthenticated(
+            res,
+            "Authenticated reviewer identity is required."
+          );
         }
 
         const projectId = getRouteParam(req.params.projectId);
 
         if (!(await authorization.canAccessReviewQueue(req, projectId))) {
-          return res.status(403).json({
-            success: false,
-            message: "You are not authorized to access this review queue.",
-          });
+          return unauthorized(
+            res,
+            "You are not authorized to access this review queue."
+          );
         }
 
         const queue = await service.getReviewQueue(projectId);
@@ -701,7 +777,7 @@ export function createEvidenceRouter(
   );
 
   // --------------------------------------------------
-  // 12. Resolve a verification review
+  // 13. Resolve a verification review
   // POST /reviews/:id/resolve
   // --------------------------------------------------
 
@@ -711,7 +787,6 @@ export function createEvidenceRouter(
       try {
         const reviewId = getRouteParam(req.params.id);
 
-        // Validate the requested resolution before checking permissions.
         const parsed = resolveReviewRequestSchema.safeParse(req.body);
 
         if (!parsed.success) {
@@ -724,17 +799,17 @@ export function createEvidenceRouter(
         const reviewerId = resolveReviewerIdentity(req);
 
         if (!reviewerId || !reviewerId.trim()) {
-          return res.status(401).json({
-            success: false,
-            message: "Authenticated reviewer identity is required.",
-          });
+          return unauthenticated(
+            res,
+            "Authenticated reviewer identity is required."
+          );
         }
 
         if (!(await authorization.canResolveReview(req, reviewId))) {
-          return res.status(403).json({
-            success: false,
-            message: "You are not authorized to resolve this review.",
-          });
+          return unauthorized(
+            res,
+            "You are not authorized to resolve this review."
+          );
         }
 
         const review = await service.resolveVerificationReview(
@@ -755,7 +830,7 @@ export function createEvidenceRouter(
   );
 
   // --------------------------------------------------
-  // 13. Retrieve project evidence coverage
+  // 14. Retrieve project evidence coverage
   // GET /projects/:projectId/evidence-coverage
   // --------------------------------------------------
 
@@ -764,6 +839,14 @@ export function createEvidenceRouter(
     async (req: Request, res: Response) => {
       try {
         const projectId = getRouteParam(req.params.projectId);
+
+        if (!(await authorization.canReadProject(req, projectId))) {
+          return unauthorized(
+            res,
+            "You are not authorized to access this project's evidence coverage."
+          );
+        }
+
         const coverage = await service.getEvidenceCoverage(projectId);
 
         return res.status(200).json({
@@ -777,7 +860,7 @@ export function createEvidenceRouter(
   );
 
   // --------------------------------------------------
-  // 14. Assess Gate A evidence readiness
+  // 15. Assess Gate A evidence readiness
   // POST /milestones/:id/gate-a/decision
   // --------------------------------------------------
 
@@ -790,19 +873,19 @@ export function createEvidenceRouter(
         const reviewerId = resolveReviewerIdentity(req);
 
         if (!reviewerId || !reviewerId.trim()) {
-          return res.status(401).json({
-            success: false,
-            message: "Authenticated reviewer identity is required.",
-          });
+          return unauthenticated(
+            res,
+            "Authenticated reviewer identity is required."
+          );
         }
 
         const organiserId = resolveOrganiserIdentity(req);
 
         if (!organiserId || !organiserId.trim()) {
-          return res.status(401).json({
-            success: false,
-            message: "Authenticated organiser identity is required.",
-          });
+          return unauthenticated(
+            res,
+            "Authenticated organiser identity is required."
+          );
         }
 
         const parsed = gateAEvidenceRequestSchema.safeParse(req.body);
@@ -824,18 +907,22 @@ export function createEvidenceRouter(
             evidenceId
           ))
         ) {
-          return res.status(403).json({
-            success: false,
-            message: "You are not authorized to assess Gate A.",
-          });
+          return unauthorized(
+            res,
+            "You are not authorized to assess Gate A."
+          );
         }
 
         const evidence = await service.getEvidenceById(evidenceId);
 
-        if (evidence.milestoneId !== milestoneId) {
+        if (
+          evidence.projectId !== projectId ||
+          evidence.milestoneId !== milestoneId
+        ) {
           return res.status(400).json({
             success: false,
-            message: "Evidence does not belong to the specified milestone.",
+            message:
+              "Evidence does not belong to the specified project and milestone.",
           });
         }
 

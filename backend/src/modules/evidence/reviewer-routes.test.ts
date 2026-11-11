@@ -23,6 +23,9 @@ describe("Evidence Reviewer Routes", () => {
       canAccessReviewQueue: async () => true,
       canResolveReview: async () => true,
       canAssessGateA: async () => false,
+      canReadEvidence: async () => false,
+      canReadProject: async () => false,
+      canExtract: async () => false,
     };
 
     app.use(

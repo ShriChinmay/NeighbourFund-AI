@@ -20,6 +20,9 @@ const testAuthorization: EvidenceAuthorization = {
   canAccessReviewQueue: async () => true,
   canResolveReview: async () => true,
   canAssessGateA: async () => true,
+  canReadEvidence: async () => true,
+  canReadProject: async () => true,
+  canExtract: async () => true,
 };
 
 afterEach(async () => {

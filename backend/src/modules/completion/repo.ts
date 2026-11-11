@@ -38,6 +38,21 @@ export interface CompletionRepository {
     specId: string
   ): Promise<Attestation[]>;
 
+    /**
+   * Atomically redeems an unused, unexpired attestation.
+   *
+   * Returns the updated attestation if redemption succeeds.
+   * Returns null if it is already used, expired, or unavailable.
+   *
+   * PostgreSQL implementations must perform this as a conditional
+   * UPDATE within a transaction or equivalent atomic operation.
+   */
+  redeemAttestation(
+    id: string,
+    response: "works" | "not_working",
+    now: Date
+  ): Promise<Attestation | null>;
+  
   updateAttestation(
     attestation: Attestation
   ): Promise<Attestation>;
