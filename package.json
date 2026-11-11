@@ -1,0 +1,13 @@
+{
+  "name": "neighbourfund-ai",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["backend", "frontend", "ai", "shared/*"],
+  "scripts": {
+    "dev:api": "npm run dev -w @neighbourfund/backend",
+    "build:api": "npm run build -w @neighbourfund/backend",
+    "typecheck:api": "npm run typecheck -w @neighbourfund/backend",
+    "test:api": "npm run test -w @neighbourfund/backend"
+  },
+  "engines": { "node": ">=22" }
+}
