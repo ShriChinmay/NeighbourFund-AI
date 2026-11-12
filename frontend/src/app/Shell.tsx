@@ -2,27 +2,7 @@ import { useState, type ReactNode } from "react";
 import { NavLink } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 import "./shell.css";
-
-export function Shell({ children }: { children: ReactNode }) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  return <div className="nf-shell">
-    <a className="nf-skip" href="#main-content">Skip to main content</a>
-    <header className="nf-header">
-      <NavLink to="/workspace" className="nf-brand" onClick={() => setMenuOpen(false)}>
-        <span className="nf-mark" aria-hidden="true">N</span>
-        <span><strong>NeighbourFund</strong><small>Community impact platform</small></span>
-      </NavLink>
-      <span className="nf-demo">SANDBOX DEMO</span>
-      <button type="button" className="nf-menu" aria-controls="nf-navigation" aria-expanded={menuOpen} aria-label={menuOpen ? "Close navigation" : "Open navigation"} onClick={() => setMenuOpen(value => !value)}>{menuOpen ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}</button>
-    </header>
-    <div className="nf-layout">
-      <nav id="nf-navigation" aria-label="Primary navigation" className={`nf-nav ${menuOpen ? "nf-nav-open" : ""}`}>
-        <p className="nf-overline">WORKSPACE</p>
-        <NavLink end to="/workspace" onClick={() => setMenuOpen(false)} className={({isActive}) => `nf-navlink ${isActive ? "nf-active" : ""}`}>Overview</NavLink>
-        <NavLink to="/legacy" onClick={() => setMenuOpen(false)} className={({isActive}) => `nf-navlink ${isActive ? "nf-active" : ""}`}>Project dashboard</NavLink>
-        <p className="nf-navnote">Funding verification and release approvals are determined by the backend, not the browser.</p>
-      </nav>
-      <main id="main-content" tabIndex={-1} className="nf-main">{children}</main>
-    </div>
-  </div>;
+export function Shell({children}:{children:ReactNode}){
+ const [menuOpen,setMenuOpen]=useState(false);
+ return <div className="nf-shell"><a className="nf-skip" href="#main-content">Skip to main content</a><header className="nf-header"><NavLink to="/workspace" className="nf-brand" onClick={()=>setMenuOpen(false)}><span className="nf-mark" aria-hidden="true">N</span><span><strong>NeighbourFund</strong><small>Community impact platform</small></span></NavLink><span className="nf-demo">SANDBOX DEMO</span><button type="button" className="nf-menu" aria-controls="nf-navigation" aria-expanded={menuOpen} aria-label={menuOpen?"Close navigation":"Open navigation"} onClick={()=>setMenuOpen(v=>!v)}>{menuOpen?<X aria-hidden="true"/>:<Menu aria-hidden="true"/>}</button></header><div className="nf-layout"><nav id="nf-navigation" aria-label="Primary navigation" className={`nf-nav ${menuOpen?"nf-nav-open":""}`}><p className="nf-overline">WORKSPACE</p><NavLink end to="/workspace" onClick={()=>setMenuOpen(false)} className={({isActive})=>`nf-navlink ${isActive?"nf-active":""}`}>Overview</NavLink><NavLink to="/projects" onClick={()=>setMenuOpen(false)} className={({isActive})=>`nf-navlink ${isActive?"nf-active":""}`}>Projects & budgets</NavLink><NavLink to="/legacy" onClick={()=>setMenuOpen(false)} className={({isActive})=>`nf-navlink ${isActive?"nf-active":""}`}>Legacy dashboard</NavLink><p className="nf-navnote">Funding verification and release approvals are determined by the backend, not the browser.</p></nav><main id="main-content" tabIndex={-1} className="nf-main">{children}</main></div></div>;
 }
