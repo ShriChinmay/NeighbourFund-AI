@@ -1,0 +1,10 @@
+@import "tailwindcss";
+@import "./tokens.css";
+@theme {
+  --color-brand: var(--nf-brand);
+  --color-surface: var(--nf-surface);
+  --color-canvas: var(--nf-background);
+  --color-ink: var(--nf-text);
+  --color-muted: var(--nf-muted);
+  --color-border: var(--nf-border);
+}

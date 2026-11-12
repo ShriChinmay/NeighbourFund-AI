@@ -56,11 +56,65 @@ export default function App() {
     })();
     return () => { active = false; };
   }, []);
-  useEffect(() => {
-    if (!projectId) return;
-    load(projectId).catch(e => { setProject(null); setSlots([]); setHouseholds([]); setMessage((e as Error).message); });
-    // Reload when role or selected project changes.
-  }, [projectId, user?.id, user?.role]);
+  
+useEffect(() => {
+  if (!projectId) return;
+
+  let active = true;
+
+  async function refreshProject() {
+    try {
+      const signedIn = Boolean(user);
+      const path = signedIn
+        ? `/projects/${projectId}`
+        : `/projects/${projectId}/public`;
+
+      const projectResult = await api<{ project: Project }>(path);
+      const slotResult = await api<{ slots: Slot[] }>(
+        `/projects/${projectId}/slots`
+      );
+
+      let poolResult: {
+        households: Household[];
+        coveredCount: number;
+      } | null = null;
+
+      if (
+        user &&
+        ["organiser", "reviewer", "admin"].includes(user.role)
+      ) {
+        poolResult = await api<{
+          households: Household[];
+          coveredCount: number;
+        }>(`/projects/${projectId}/pool`);
+      }
+
+      if (!active) return;
+
+      setProject(projectResult.project);
+      setSlots(slotResult.slots);
+      setHouseholds(poolResult?.households ?? []);
+      setCoveredCount(poolResult?.coveredCount ?? 0);
+    } catch (error) {
+      if (!active) return;
+
+      setProject(null);
+      setSlots([]);
+      setHouseholds([]);
+      setCoveredCount(0);
+      setMessage(
+        error instanceof Error ? error.message : "Unable to load project"
+      );
+    }
+  }
+
+  void refreshProject();
+
+  return () => {
+    active = false;
+  };
+}, [projectId, user]);
+
   function chooseProject(id: string) { localStorage.setItem("nf_project_id", id); setProjectId(id); setFeasibility(null); }
   async function run(action: () => Promise<void>, success: string) {
     setBusy(true); setMessage("");

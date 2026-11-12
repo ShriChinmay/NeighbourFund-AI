@@ -1,0 +1,14 @@
+:root {
+  --nf-brand: #245647;
+  --nf-surface: #ffffff;
+  --nf-background: #f5f6f3;
+  --nf-text: #17221e;
+  --nf-muted: #5d6963;
+  --nf-border: #d8dfd9;
+  --nf-success: #24704c;
+  --nf-warning: #8b5b18;
+  --nf-danger: #a33131;
+  --nf-radius: 6px;
+  --nf-space-unit: 4px;
+  --nf-font: Inter, system-ui, sans-serif;
+}
