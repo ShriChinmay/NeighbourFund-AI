@@ -43,12 +43,40 @@ const defaultGateBPrerequisiteProvider: GateBPrerequisiteProvider = {
   },
 };
 
+/**
+ * P3 integration boundary.
+ *
+ * Validates household ownership against the project
+ * associated with the milestone.
+ *
+ * Database errors must propagate and deny the operation.
+ */
+export interface AttestationOwnershipProvider {
+  validateAttestationHouseholds(
+    milestoneId: string,
+    householdIds: readonly string[]
+  ): Promise<boolean>;
+}
+
+/**
+ * Fail-closed default.
+ * Attestation creation remains blocked until P3 ownership
+ * validation is configured.
+ */
+const defaultAttestationOwnershipProvider: AttestationOwnershipProvider = {
+  async validateAttestationHouseholds() {
+    return false;
+  },
+};
+
 export class CompletionService {
   constructor(
     private readonly repo: CompletionRepository,
     private readonly hmacSecret: string,
     private readonly gateBPrerequisiteProvider:
-      GateBPrerequisiteProvider = defaultGateBPrerequisiteProvider
+      GateBPrerequisiteProvider = defaultGateBPrerequisiteProvider,
+    private readonly ownershipProvider:
+      AttestationOwnershipProvider = defaultAttestationOwnershipProvider
   ) {
     if (
       !hmacSecret ||
@@ -166,10 +194,9 @@ export class CompletionService {
       );
     }
 
-    // A completion specification may have multiple proof submissions over
-    // time, but only after the latest submission was rejected or marked
-    // needs_more. Previous submissions and their reviews remain immutable
-    // history; a resubmission always receives a new ID.
+    // Resubmission is allowed only after the latest proof
+    // was rejected or marked needs_more.
+    // Previous submissions and reviews remain in history.
     const latestProof = await this.repo.getProofBySpecId(spec.id);
 
     if (latestProof) {
@@ -250,7 +277,7 @@ export class CompletionService {
     }
 
     if (!input.reason || !input.reason.trim()) {
-      throw new Error("Proof review reason is required.");
+      throw new Error("Review reason is required.");
     }
 
     const review: ProofReview = {
@@ -289,11 +316,17 @@ export class CompletionService {
     }
 
     const normalizedIds = householdIds.map(
-      (id) => id.trim()
+      (id) => typeof id === "string" ? id.trim() : ""
     );
 
     if (normalizedIds.some((id) => !id)) {
       throw new Error("Household ID is required.");
+    }
+
+    if (normalizedIds.length > 1000) {
+      throw new Error(
+        "A maximum of 1000 households can be invited in one batch."
+      );
     }
 
     if (
@@ -305,7 +338,22 @@ export class CompletionService {
       );
     }
 
-    // Validate all households before inserting any records.
+    // P3 ownership preflight validation.
+    // Reject unknown, invalid and cross-project households.
+    // Provider/database errors propagate and deny the operation.
+    const ownershipValid =
+      await this.ownershipProvider.validateAttestationHouseholds(
+        spec.milestoneId,
+        normalizedIds
+      );
+
+    if (!ownershipValid) {
+      throw new Error(
+        "One or more households do not belong to the milestone's project."
+      );
+    }
+
+    // Check existing invitations before creating new records.
     for (const householdId of normalizedIds) {
       const existing =
         await this.repo.getAttestationByHousehold(
@@ -414,12 +462,10 @@ export class CompletionService {
       throw new Error("Invalid attestation response.");
     }
 
-    // Validate the token, including its expiry and usage status.
     const attestation =
       await this.getAttestationByToken(token);
 
-    // Redeem atomically. Only one request can successfully
-    // change an unused attestation into a used attestation.
+    // Repository implementation must perform atomic redemption.
     const redeemed = await this.repo.redeemAttestation(
       attestation.id,
       response,
@@ -428,7 +474,7 @@ export class CompletionService {
 
     if (!redeemed) {
       throw new Error(
-        "Attestation link has already been used or expired."
+        "Attestation link is invalid, expired, or already used."
       );
     }
 

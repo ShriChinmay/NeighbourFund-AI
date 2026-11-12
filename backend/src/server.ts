@@ -1,19 +1,14 @@
-import dotenv from "dotenv";
-import type { Express } from "express";
 
-dotenv.config({
-  path: "../../.env",
-});
+import type { Express } from "express";
+import { env } from "./config/env.js";
 
 async function startServer(): Promise<void> {
   const appModule = await import("./app.js");
 
   const app = appModule.default as unknown as Express;
 
-  const PORT = Number(process.env.PORT) || 5000;
-
-  app.listen(PORT, () => {
-    console.log(`NeighbourFund API running on port ${PORT}`);
+  app.listen(env.PORT, () => {
+    console.log(`NeighbourFund API running on port ${env.PORT}`);
   });
 }
 

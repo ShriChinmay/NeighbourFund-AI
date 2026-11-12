@@ -3,7 +3,7 @@ import { Router } from "express";
 import type { Request, Response, NextFunction } from "express";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
-import { mkdir, unlink, open } from "node:fs/promises";
+import { mkdir, unlink, open, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { EvidenceService } from "./service.js";
@@ -175,29 +175,10 @@ const gateAEvidenceRequestSchema = z
 // Multer storage configuration
 // --------------------------------------------------
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, callback) => {
-    mkdir(EVIDENCE_STORAGE_DIR, { recursive: true })
-      .then(() => callback(null, EVIDENCE_STORAGE_DIR))
-      .catch((error: unknown) => callback(error as Error, ""));
-  },
-
-  filename: (_req, file, callback) => {
-    const extensionByMimeType: Record<string, string> = {
-      "application/pdf": ".pdf",
-      "image/jpeg": ".jpg",
-      "image/png": ".png",
-      "image/webp": ".webp",
-    };
-
-    const extension = extensionByMimeType[file.mimetype];
-
-    callback(null, `${randomUUID()}${extension ?? ""}`);
-  },
-});
-
+// Keep incoming files in memory until authentication and authorization pass.
+// Files are written to disk only inside the authorized upload handler.
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: {
     fileSize: MAX_EVIDENCE_FILE_SIZE,
     files: 1,
@@ -333,8 +314,6 @@ export function createEvidenceRouter(
           });
         }
 
-        uploadedFilePath = req.file.path;
-
         // Validate the public request.
         // Client-supplied uploadedBy and storageKey are deliberately ignored.
         const parsed = createEvidenceRequestSchema.safeParse({
@@ -347,8 +326,6 @@ export function createEvidenceRouter(
         });
 
         if (!parsed.success) {
-          await removeUploadedFile(uploadedFilePath);
-
           return res.status(400).json({
             success: false,
             errors: parsed.error.issues,
@@ -359,8 +336,6 @@ export function createEvidenceRouter(
         const uploaderId = await resolveUploaderIdentity(req);
 
         if (!uploaderId || !uploaderId.trim()) {
-          await removeUploadedFile(uploadedFilePath);
-
           return unauthenticated(
             res,
             "Authenticated uploader identity is required."
@@ -377,13 +352,24 @@ export function createEvidenceRouter(
         );
 
         if (!allowed) {
-          await removeUploadedFile(uploadedFilePath);
-
           return unauthorized(
             res,
             "You are not authorized to upload evidence for this project."
           );
         }
+
+        // Persist only after trusted identity and project authorization pass.
+        const extensionByMimeType: Record<string, string> = {
+          "application/pdf": ".pdf",
+          "image/jpeg": ".jpg",
+          "image/png": ".png",
+          "image/webp": ".webp",
+        };
+        const filename = `${randomUUID()}${extensionByMimeType[req.file.mimetype] ?? ""}`;
+
+        await mkdir(EVIDENCE_STORAGE_DIR, { recursive: true });
+        uploadedFilePath = resolve(EVIDENCE_STORAGE_DIR, filename);
+        await writeFile(uploadedFilePath, req.file.buffer);
 
         // Validate actual file bytes, not only the MIME header.
         const validSignature = await hasValidFileSignature(
@@ -403,7 +389,7 @@ export function createEvidenceRouter(
         const input = {
           ...parsed.data,
           uploadedBy: uploaderId,
-          storageKey: req.file.filename,
+          storageKey: filename,
         };
 
         const validatedInput = createEvidenceSchema.safeParse(input);

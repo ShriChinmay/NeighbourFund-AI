@@ -200,8 +200,13 @@ describe("Completion Module", () => {
     service = new CompletionService(
       repo,
       secret,
-      prerequisiteProvider
-    );
+      prerequisiteProvider,
+      {
+        async validateAttestationHouseholds() {
+          return true;
+        },
+      }
+  );
 
     spec = await service.createCompletionSpec({
       milestoneId: "milestone-1",

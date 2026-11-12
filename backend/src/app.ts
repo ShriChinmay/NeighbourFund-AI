@@ -1,18 +1,41 @@
-import express, { type Express } from "express";
+import express, { type ErrorRequestHandler } from "express";
+import cors from "cors";
+import helmet from "helmet";
 
+import { env } from "./config/env.js";
+
+// P3 platform modules
+import { optionalAuth } from "./modules/platform/auth/session.js";
+import { authRouter } from "./modules/platform/auth/routes.js";
+import { projectsRouter } from "./modules/platform/projects/routes.js";
+import { fundingRouter } from "./modules/platform/funding/routes.js";
+
+import {
+  completionAuthorization,
+  createEvidenceAuthorization,
+  resolveReviewerIdentity,
+  resolveOrganiserIdentity,
+  resolveUploaderIdentity,
+} from "./modules/platform/integration/authorization.js";
+
+import {
+  validateAttestationHouseholds,
+} from "./modules/platform/ownership/ownership.js";
+
+// P4 Completion module
 import {
   CompletionService,
 } from "./modules/completion/service.js";
 
 import {
   createCompletionRouter,
-  denyAllCompletionAuthorization,
 } from "./modules/completion/routes.js";
 
 import {
   InMemoryCompletionRepository,
 } from "./modules/completion/in-memory-repo.js";
 
+// P4 Evidence module
 import {
   EvidenceService,
   type InvoiceExtractionProvider,
@@ -26,92 +49,172 @@ import {
   InMemoryEvidenceRepository,
 } from "./modules/evidence/in-memory-repo.js";
 
-const app: Express = express();
+export function createApp() {
+  const app = express();
 
-app.use(express.json({ limit: "1mb" }));
+  // Security and middleware
+  app.disable("x-powered-by");
+  app.use(helmet());
 
-// --------------------------------------------------
-// Health check
-// --------------------------------------------------
-
-app.get("/health", (_req, res) => {
-  res.status(200).json({
-    success: true,
-    message: "NeighbourFund API is running",
-    timestamp: new Date().toISOString(),
-  });
-});
-
-// --------------------------------------------------
-// Completion module
-// --------------------------------------------------
-
-const completionRepository = new InMemoryCompletionRepository();
-
-const completionService = new CompletionService(
-  completionRepository,
-  process.env.ATTESTATION_HMAC_SECRET ?? ""
-);
-
-/**
- * P3 authentication has not been implemented yet.
- *
- * Protected Completion operations therefore remain
- * denied by default.
- *
- * Replace this authorization configuration only when
- * P3 supplies verified identity and permission callbacks.
- */
-app.use(
-  "/api",
-  createCompletionRouter(
-    completionService,
-    denyAllCompletionAuthorization
+  const allowedOrigins = (
+    process.env.APP_BASE_URL ??
+    "http://localhost:5173,http://127.0.0.1:5173"
   )
-);
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
 
-// --------------------------------------------------
-// Evidence module
-// --------------------------------------------------
+  app.use(
+    cors({
+      origin: allowedOrigins,
+      credentials: true,
+    })
+  );
 
-const evidenceRepository = new InMemoryEvidenceRepository();
+  app.use(express.json({ limit: "1mb" }));
 
-/**
- * Temporary mock invoice extraction provider.
- *
- * This must be replaced by the actual OCR/AI provider
- * before production deployment.
- */
-const mockInvoiceExtractionProvider: InvoiceExtractionProvider = {
-  async extractInvoice() {
-    return {
-      provider: "mock-invoice-extractor",
-      metadata: {
-        invoiceNumber: "INV-2026-001",
-        vendorName: "Solar Solutions Ltd",
-        invoiceDate: "2026-11-05",
-        totalAmountCents: 1250000,
-        currency: "INR",
-        description: "Solar panel installation",
+  // Health checks
+  app.get("/health", (_req, res) => {
+    res.status(200).json({
+      status: "ok",
+      service: "neighbourfund-api",
+    });
+  });
+
+  app.get("/api/health", (_req, res) => {
+    res.status(200).json({
+      status: "ok",
+      service: "neighbourfund-api",
+    });
+  });
+
+  // Resolve trusted session identity for API routes.
+  app.use("/api", optionalAuth);
+
+  // P3 platform routes
+  app.use("/api", authRouter);
+  app.use("/api", projectsRouter);
+  app.use("/api", fundingRouter);
+
+  // P4 Completion module
+  const completionRepository = new InMemoryCompletionRepository();
+
+  const completionService = new CompletionService(
+    completionRepository,
+    process.env.ATTESTATION_HMAC_SECRET ?? "",
+    undefined,
+    {
+      validateAttestationHouseholds,
+    }
+  );
+
+  app.use(
+    "/api",
+    createCompletionRouter(
+      completionService,
+      completionAuthorization
+    )
+  );
+
+  // P4 Evidence module
+  const evidenceRepository = new InMemoryEvidenceRepository();
+
+  const mockInvoiceExtractionProvider: InvoiceExtractionProvider = {
+    async extractInvoice() {
+      return {
+        provider: "mock-invoice-extractor",
+        metadata: {
+          invoiceNumber: "INV-2026-001",
+          vendorName: "Solar Solutions Ltd",
+          invoiceDate: "2026-11-05",
+          totalAmountCents: 1250000,
+          currency: "INR",
+          description: "Solar panel installation",
+        },
+      };
+    },
+  };
+
+  const evidenceService = new EvidenceService(
+    evidenceRepository,
+    mockInvoiceExtractionProvider
+  );
+
+  // Connect P3 authorization to P4 Evidence repository.
+  const evidenceAuthorization = createEvidenceAuthorization({
+    async evidenceProjectId(evidenceId) {
+      const evidence =
+        await evidenceRepository.getEvidenceById(evidenceId);
+
+      return evidence?.projectId ?? null;
+    },
+
+    async expenseProjectId(expenseId) {
+      const expense =
+        await evidenceRepository.getExpenseById(expenseId);
+
+      return expense?.projectId ?? null;
+    },
+
+    async reviewProjectId(reviewId) {
+      const review =
+        await evidenceRepository.getVerificationReviewById(reviewId);
+
+      if (!review) {
+        return null;
+      }
+
+      const expense =
+        await evidenceRepository.getExpenseById(review.expenseId);
+
+      return expense?.projectId ?? null;
+    },
+  });
+
+  app.use(
+    "/api",
+    createEvidenceRouter(
+      evidenceService,
+      resolveReviewerIdentity,
+      resolveOrganiserIdentity,
+      resolveUploaderIdentity,
+      evidenceAuthorization
+    )
+  );
+
+  // 404 handler
+  app.use((_req, res) => {
+    res.status(404).json({
+      error: {
+        code: "NOT_FOUND",
+        message: "Route not found",
       },
-    };
-  },
-};
+    });
+  });
 
-const evidenceService = new EvidenceService(
-  evidenceRepository,
-  mockInvoiceExtractionProvider
-);
+  // Central error handler
+  const errorHandler: ErrorRequestHandler = (
+    error,
+    _req,
+    res,
+    _next
+  ) => {
+    console.error("API error:", error);
 
-/**
- * Evidence reviewer and organiser resolvers currently
- * default to null inside createEvidenceRouter.
- *
- * P3 identity integration remains pending.
- */
-app.use(
-  "/api",
-  createEvidenceRouter(evidenceService)
-);
+    res.status(500).json({
+      error: {
+        code: "INTERNAL_SERVER_ERROR",
+        message: "Internal server error",
+      },
+    });
+  };
+
+  app.use(errorHandler);
+
+  return app;
+}
+
+// Preserve both P3 test imports and P4 server compatibility.
+const app = createApp();
 
 export default app;
