@@ -1,10 +1,11 @@
-﻿import express, { type ErrorRequestHandler } from "express";
+import express, { type ErrorRequestHandler } from "express";
 import cors from "cors";
 import helmet from "helmet";
 import { optionalAuth } from "./modules/platform/auth/session.js";
 import { authRouter } from "./modules/platform/auth/routes.js";
 import { projectsRouter } from "./modules/platform/projects/routes.js";
 import { fundingRouter } from "./modules/platform/funding/routes.js";
+import { paypalRouter } from "./modules/payments/paypal.js";
 import { paymentIntentRouter } from "./modules/payments/routes.js";
 
 export function createApp() {
@@ -26,6 +27,7 @@ export function createApp() {
   app.use("/api", optionalAuth, authRouter);
   app.use("/api", optionalAuth, projectsRouter);
   app.use("/api", optionalAuth, fundingRouter);
+  app.use("/api", optionalAuth, paypalRouter);
   app.use("/api", optionalAuth, paymentIntentRouter);
   app.use((_req, res) => {
     res.status(404).json({ error: { code: "NOT_FOUND", message: "Route not found" } });
@@ -38,4 +40,3 @@ export function createApp() {
   app.use(errorHandler);
   return app;
 }
-
