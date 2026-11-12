@@ -1,0 +1,1 @@
+Thin route components will be added as features are migrated.

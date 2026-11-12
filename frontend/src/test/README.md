@@ -1,0 +1,1 @@
+MSW handlers, fixtures and RTL helpers will be introduced alongside the first migrated feature.

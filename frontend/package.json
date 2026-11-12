@@ -1,8 +1,49 @@
 {
-  "name": "@neighbourfund/frontend",
-  "version": "0.1.0",
-  "private": true,
-  "scripts": { "dev": "vite --host 0.0.0.0", "build": "tsc -b && vite build" },
-  "dependencies": { "react": "^19.0.0", "react-dom": "^19.0.0" },
-  "devDependencies": { "@types/react": "^19.0.0", "@types/react-dom": "^19.0.0", "typescript": "^5.9.0", "vite": "^7.0.0" }
+    "name":  "@neighbourfund/frontend",
+    "version":  "0.1.0",
+    "private":  true,
+    "scripts":  {
+                    "dev":  "vite --host 0.0.0.0",
+                    "build":  "tsc -b \u0026\u0026 vite build",
+                    "lint":  "eslint src",
+                    "typecheck":  "tsc --noEmit -p tsconfig.json",
+                    "format:check":  "prettier --check src",
+                    "test":  "vitest run",
+                    "test:watch":  "vitest"
+                },
+    "dependencies":  {
+                         "@hookform/resolvers":  "^7.0.5",
+                         "@tanstack/react-query":  "^5.107.1",
+                         "ag-grid-community":  "^36.3.0",
+                         "ag-grid-react":  "^36.3.0",
+                         "clsx":  "^2.1.1",
+                         "lucide-react":  "^1.72.0",
+                         "react":  "^19.0.0",
+                         "react-dom":  "^19.0.0",
+                         "react-hook-form":  "^7.92.0",
+                         "react-router-dom":  "^7.18.5",
+                         "tailwind-merge":  "^3.7.0",
+                         "zod":  "^4.6.7"
+                     },
+    "devDependencies":  {
+                            "@eslint/js":  "^9.39.5",
+                            "@tailwindcss/vite":  "^4.3.5",
+                            "@testing-library/jest-dom":  "^7.0.1",
+                            "@testing-library/react":  "^16.3.3",
+                            "@testing-library/user-event":  "^14.6.9",
+                            "@types/react":  "^19.0.0",
+                            "@types/react-dom":  "^19.0.0",
+                            "eslint":  "^9.39.5",
+                            "eslint-plugin-boundaries":  "^7.4.2",
+                            "eslint-plugin-jsx-a11y":  "^6.10.2",
+                            "eslint-plugin-react-hooks":  "^7.1.1",
+                            "jsdom":  "^29.1.1",
+                            "msw":  "^2.15.0",
+                            "prettier":  "^3.10.0",
+                            "tailwindcss":  "^4.3.5",
+                            "typescript":  "^5.9.0",
+                            "typescript-eslint":  "^8.72.2",
+                            "vite":  "^7.0.0",
+                            "vitest":  "^5.1.0"
+                        }
 }
