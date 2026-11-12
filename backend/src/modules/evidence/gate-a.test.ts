@@ -20,6 +20,7 @@ function setup(
   app.use(express.json());
 
   const testAuthorization: EvidenceAuthorization = {
+    getProjectOrganiserId: async () => "organiser-1",
     canUpload: async () => false,
     canReview: async () => true,
     canAccessReviewQueue: async () => true,
@@ -289,7 +290,7 @@ describe("P4 evidence coverage and Gate A readiness", () => {
     expect(response.status).toBe(400);
   });
 
-  it("requires authenticated organiser identity", async () => {
+  it("does not require an authenticated organiser session", async () => {
     const { app, repo } = setup("reviewer-1", null);
     await seedExpenseAndEvidence(repo);
 
@@ -301,9 +302,10 @@ describe("P4 evidence coverage and Gate A readiness", () => {
         evidenceId: "evidence-1",
       });
 
-    expect(response.status).toBe(401);
-    expect(response.body.message).toBe(
-      "Authenticated organiser identity is required."
+    expect(response.status).toBe(200);
+    expect(response.body.data.eligible).toBe(false);
+    expect(response.body.data.reasons).toContain(
+      "Evidence does not have approval from the specified reviewer."
     );
   });
 });

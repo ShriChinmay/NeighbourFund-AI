@@ -127,7 +127,9 @@ export class InMemoryEvidenceRepository implements EvidenceRepository {
     );
 
     if (isDuplicateActiveFlag) {
-      throw new Error("An active flag of this type already exists for this evidence.");
+      throw new Error(
+        "An active flag of this type already exists for this evidence."
+      );
     }
 
     const stored: EvidenceFlag = {
@@ -192,9 +194,7 @@ export class InMemoryEvidenceRepository implements EvidenceRepository {
       status: review.status ?? "active",
     };
 
-    this.reviews.set(stored.id, stored);
-
-    await this.createReviewAuditEvent({
+    const auditEvent: VerificationReviewAuditEvent = {
       id: `audit_${stored.id}_created`,
       reviewId: stored.id,
       expenseId: stored.expenseId,
@@ -204,7 +204,14 @@ export class InMemoryEvidenceRepository implements EvidenceRepository {
       newReason: stored.reason,
       action: "created",
       createdAt: new Date(),
-    });
+    };
+
+    if (this.reviewAuditEvents.has(auditEvent.id)) {
+      throw new Error("Review audit event already exists.");
+    }
+
+    this.reviews.set(stored.id, stored);
+    this.reviewAuditEvents.set(auditEvent.id, auditEvent);
 
     return stored;
   }
@@ -249,9 +256,7 @@ export class InMemoryEvidenceRepository implements EvidenceRepository {
       status: review.status ?? existing.status ?? "active",
     };
 
-    this.reviews.set(updated.id, updated);
-
-    await this.createReviewAuditEvent({
+    const auditEvent: VerificationReviewAuditEvent = {
       id: `audit_${updated.id}_${Date.now()}_${this.reviewAuditEvents.size}`,
       reviewId: updated.id,
       expenseId: updated.expenseId,
@@ -263,7 +268,60 @@ export class InMemoryEvidenceRepository implements EvidenceRepository {
       newReason: updated.reason,
       action: "updated",
       createdAt: new Date(),
-    });
+    };
+
+    if (this.reviewAuditEvents.has(auditEvent.id)) {
+      throw new Error("Review audit event already exists.");
+    }
+
+    this.reviews.set(updated.id, updated);
+    this.reviewAuditEvents.set(auditEvent.id, auditEvent);
+
+    return updated;
+  }
+
+  /**
+   * Atomically updates a review and appends its audit event.
+   */
+  async resolveVerificationReviewWithAudit(
+    review: VerificationReview,
+    event: VerificationReviewAuditEvent
+  ): Promise<VerificationReview> {
+    const existing = this.reviews.get(review.id);
+
+    if (!existing) {
+      throw new Error("Verification review not found.");
+    }
+
+    if (
+      existing.expenseId !== review.expenseId ||
+      existing.evidenceId !== review.evidenceId ||
+      existing.flagType !== review.flagType
+    ) {
+      throw new Error("Review identity fields cannot be changed.");
+    }
+
+    if (
+      event.reviewId !== review.id ||
+      event.expenseId !== review.expenseId ||
+      event.evidenceId !== review.evidenceId ||
+      event.action !== "updated"
+    ) {
+      throw new Error("Review audit event does not match the review update.");
+    }
+
+    if (this.reviewAuditEvents.has(event.id)) {
+      throw new Error("Review audit event already exists.");
+    }
+
+    const updated: VerificationReview = {
+      ...review,
+      status: review.status ?? existing.status ?? "active",
+    };
+
+    // Both writes happen synchronously in this in-memory implementation.
+    this.reviews.set(updated.id, updated);
+    this.reviewAuditEvents.set(event.id, event);
 
     return updated;
   }
@@ -318,11 +376,8 @@ export class InMemoryEvidenceRepository implements EvidenceRepository {
         updatedAt: now,
       };
 
-      this.reviews.set(id, updated);
-      superseded.push(updated);
-
-      await this.createReviewAuditEvent({
-        id: `audit_${id}_superseded_${now.getTime()}`,
+      const auditEvent: VerificationReviewAuditEvent = {
+        id: `audit_${id}_superseded_${now.getTime()}_${this.reviewAuditEvents.size}`,
         reviewId: id,
         expenseId: review.expenseId,
         evidenceId,
@@ -333,9 +388,81 @@ export class InMemoryEvidenceRepository implements EvidenceRepository {
         newReason: reason,
         action: "superseded",
         createdAt: now,
-      });
+      };
+
+      this.reviews.set(id, updated);
+      this.reviewAuditEvents.set(auditEvent.id, auditEvent);
+
+      superseded.push(updated);
     }
 
     return superseded;
+  }
+
+  /**
+   * Atomically supersedes active flags and reviews for an evidence record.
+   */
+  async invalidateEvidenceReviews(
+    evidenceId: string,
+    reason: string
+  ): Promise<void> {
+    const now = new Date();
+
+    const flagsToSupersede = [...this.flags.entries()].filter(
+      ([, flag]) =>
+        flag.evidenceId === evidenceId &&
+        flag.status !== "superseded"
+    );
+
+    const reviewsToSupersede = [...this.reviews.entries()].filter(
+      ([, review]) =>
+        review.evidenceId === evidenceId &&
+        review.status !== "superseded"
+    );
+
+    const auditEvents: VerificationReviewAuditEvent[] =
+      reviewsToSupersede.map(([id, review]) => ({
+        id: `audit_${id}_superseded_${now.getTime()}_${this.reviewAuditEvents.size}`,
+        reviewId: id,
+        expenseId: review.expenseId,
+        evidenceId,
+        reviewerId: review.reviewerId,
+        previousResolution: review.resolution,
+        newResolution: review.resolution,
+        previousReason: review.reason,
+        newReason: reason,
+        action: "superseded",
+        createdAt: now,
+      }));
+
+    // Validate audit IDs before mutating either collection.
+    for (const event of auditEvents) {
+      if (this.reviewAuditEvents.has(event.id)) {
+        throw new Error("Review audit event already exists.");
+      }
+    }
+
+    for (const [id, flag] of flagsToSupersede) {
+      this.flags.set(id, {
+        ...flag,
+        status: "superseded",
+        supersededAt: now,
+        supersededReason: reason,
+      });
+    }
+
+    for (const [id, review] of reviewsToSupersede) {
+      this.reviews.set(id, {
+        ...review,
+        status: "superseded",
+        supersededAt: now,
+        supersededReason: reason,
+        updatedAt: now,
+      });
+    }
+
+    for (const event of auditEvents) {
+      this.reviewAuditEvents.set(event.id, event);
+    }
   }
 }

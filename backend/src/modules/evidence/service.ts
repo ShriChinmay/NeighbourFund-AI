@@ -12,6 +12,7 @@ import type {
   ExpenseRecord,
   EvidenceFlag,
   VerificationReview,
+  VerificationReviewAuditEvent,
   FlagType,
   ReviewResolution,
 } from "./types.js";
@@ -126,12 +127,7 @@ export class EvidenceService {
     evidenceId: string,
     reason: string
   ): Promise<void> {
-    await this.repo.supersedeActiveFlagsByEvidence(
-      evidenceId,
-      reason
-    );
-
-    await this.repo.supersedeReviewsByEvidence(
+    await this.repo.invalidateEvidenceReviews(
       evidenceId,
       reason
     );
@@ -759,15 +755,34 @@ export class EvidenceService {
       );
     }
 
+    const now = new Date();
+
     const updated: VerificationReview = {
       ...existing,
       reviewerId,
       resolution: parsedResolution.data,
       reason: reason?.trim(),
-      updatedAt: new Date(),
+      updatedAt: now,
     };
 
-    return this.repo.updateVerificationReview(updated);
+    const auditEvent: VerificationReviewAuditEvent = {
+      id: randomUUID(),
+      reviewId: existing.id,
+      expenseId: existing.expenseId,
+      evidenceId: existing.evidenceId,
+      reviewerId,
+      previousResolution: existing.resolution,
+      newResolution: parsedResolution.data,
+      previousReason: existing.reason,
+      newReason: reason?.trim(),
+      action: "updated",
+      createdAt: now,
+    };
+
+    return this.repo.resolveVerificationReviewWithAudit(
+      updated,
+      auditEvent
+    );
   }
 
   // --------------------------------------------------

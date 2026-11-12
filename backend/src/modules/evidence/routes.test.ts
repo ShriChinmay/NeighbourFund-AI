@@ -17,6 +17,7 @@ describe("Evidence Upload Routes", () => {
   const uploadedFiles: string[] = [];
 
   const testAuthorization: EvidenceAuthorization = {
+    getProjectOrganiserId: async () => null,
     canUpload: async () => true,
     canReadEvidence: async () => true,
     canReadProject: async () => true,
@@ -135,6 +136,7 @@ describe("Evidence Upload Routes", () => {
     const repository = new InMemoryEvidenceRepository();
     const service = new EvidenceService(repository);
     const denyAuthorization: EvidenceAuthorization = {
+      getProjectOrganiserId: async () => null,
       canUpload: async () => false,
       canReview: async () => false,
       canAccessReviewQueue: async () => false,

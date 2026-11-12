@@ -1,3 +1,4 @@
+
 import { randomUUID } from "node:crypto";
 
 import type { CompletionRepository } from "./repo.js";
@@ -23,8 +24,6 @@ import {
 
 /**
  * P2 integration boundary.
- *
- * P4 only consumes the result of this interface.
  * The actual payment/release implementation belongs to P2.
  */
 export interface GateBPrerequisiteProvider {
@@ -45,11 +44,8 @@ const defaultGateBPrerequisiteProvider: GateBPrerequisiteProvider = {
 
 /**
  * P3 integration boundary.
- *
  * Validates household ownership against the project
  * associated with the milestone.
- *
- * Database errors must propagate and deny the operation.
  */
 export interface AttestationOwnershipProvider {
   validateAttestationHouseholds(
@@ -60,8 +56,6 @@ export interface AttestationOwnershipProvider {
 
 /**
  * Fail-closed default.
- * Attestation creation remains blocked until P3 ownership
- * validation is configured.
  */
 const defaultAttestationOwnershipProvider: AttestationOwnershipProvider = {
   async validateAttestationHouseholds() {
@@ -194,9 +188,8 @@ export class CompletionService {
       );
     }
 
-    // Resubmission is allowed only after the latest proof
-    // was rejected or marked needs_more.
-    // Previous submissions and reviews remain in history.
+    // Resubmission is allowed only after rejection
+    // or a needs_more decision.
     const latestProof = await this.repo.getProofBySpecId(spec.id);
 
     if (latestProof) {
@@ -254,8 +247,8 @@ export class CompletionService {
   }
 
   // 5. Create reviewer decision.
-  // Reviewer identity must come from a trusted server-side
-  // authentication/authorization layer, not the request body.
+  // Reviewer identity must come from trusted server-side
+  // authentication/authorization, not the request body.
 
   async createProofReview(
     submissionId: string,
@@ -292,7 +285,10 @@ export class CompletionService {
     return this.repo.createProofReview(review);
   }
 
-  // 6. Generate household attestation links
+  // 6. Generate household attestation links.
+  // All records are submitted as one batch.
+  // The PostgreSQL repository must insert them in one
+  // transaction and roll back if any insert fails.
 
   async generateAttestationLinks(
     identifier: string,
@@ -330,8 +326,7 @@ export class CompletionService {
     }
 
     if (
-      new Set(normalizedIds).size !==
-      normalizedIds.length
+      new Set(normalizedIds).size !== normalizedIds.length
     ) {
       throw new Error(
         "Duplicate household IDs are not allowed."
@@ -339,8 +334,8 @@ export class CompletionService {
     }
 
     // P3 ownership preflight validation.
-    // Reject unknown, invalid and cross-project households.
-    // Provider/database errors propagate and deny the operation.
+    // PostgreSQL must revalidate ownership inside the
+    // same transaction as the batch insert.
     const ownershipValid =
       await this.ownershipProvider.validateAttestationHouseholds(
         spec.milestoneId,
@@ -353,22 +348,24 @@ export class CompletionService {
       );
     }
 
-    // Check existing invitations before creating new records.
-    for (const householdId of normalizedIds) {
-      const existing =
-        await this.repo.getAttestationByHousehold(
+    // Check for existing invitations.
+    const existingAttestations = await Promise.all(
+      normalizedIds.map((householdId) =>
+        this.repo.getAttestationByHousehold(
           spec.id,
           householdId
-        );
+        )
+      )
+    );
 
-      if (existing) {
-        throw new Error(
-          `Household ${householdId} has already been invited.`
-        );
-      }
+    if (existingAttestations.some(Boolean)) {
+      throw new Error(
+        "One or more households have already been invited."
+      );
     }
 
     const links: AttestationLink[] = [];
+    const attestations: Attestation[] = [];
 
     for (const householdId of normalizedIds) {
       const token = generateToken();
@@ -387,7 +384,7 @@ export class CompletionService {
         createdAt: new Date(),
       };
 
-      await this.repo.createAttestation(attestation);
+      attestations.push(attestation);
 
       links.push({
         householdId,
@@ -395,6 +392,12 @@ export class CompletionService {
         expiresAt,
       });
     }
+
+    // Single batch repository operation.
+    await this.repo.createAttestationsForMilestone(
+      spec.milestoneId,
+      attestations
+    );
 
     return links;
   }
@@ -529,7 +532,7 @@ export class CompletionService {
       latestReview?.decision === "approved";
 
     // P2 supplies the actual Tranche A payment/submission status.
-    // If no trusted provider is configured, this returns false.
+    // Without a trusted provider, this remains false.
     const trancheAComplete =
       await this.gateBPrerequisiteProvider
         .isTrancheAPaidOrSubmitted(spec.milestoneId);

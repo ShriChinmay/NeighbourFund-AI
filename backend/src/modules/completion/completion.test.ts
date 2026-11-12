@@ -114,6 +114,60 @@ class InMemoryCompletionRepository
     return attestation;
   }
 
+
+  async createAttestationsForMilestone(
+    milestoneId: string,
+    attestations: Attestation[]
+  ): Promise<Attestation[]> {
+    if (!attestations.length || attestations.length > 1000) {
+      throw new Error("Invalid attestation batch size.");
+    }
+
+    const spec = await this.getSpecByMilestone(milestoneId);
+
+    if (!spec) {
+      throw new Error("Completion specification not found.");
+    }
+
+    if (attestations.some((a) => a.specId !== spec.id)) {
+      throw new Error("Invalid completion specification.");
+    }
+
+    const householdIds = attestations.map((a) => a.householdId);
+    const ids = attestations.map((a) => a.id);
+    const tokenHashes = attestations.map((a) => a.tokenHash);
+
+    if (
+      new Set(householdIds).size !== householdIds.length ||
+      new Set(ids).size !== ids.length ||
+      new Set(tokenHashes).size !== tokenHashes.length
+    ) {
+      throw new Error("Duplicate attestation data.");
+    }
+
+    // Validate the entire batch before inserting.
+    for (const a of attestations) {
+      if (this.attestations.has(a.id)) {
+        throw new Error("Attestation ID already exists.");
+      }
+
+      if (await this.getAttestationByHousehold(a.specId, a.householdId)) {
+        throw new Error("Household already invited.");
+      }
+
+      if (await this.getAttestationByTokenHash(a.tokenHash)) {
+        throw new Error("Duplicate token hash.");
+      }
+    }
+
+    // Insert only after all validations pass.
+    for (const a of attestations) {
+      this.attestations.set(a.id, a);
+    }
+
+    return [...attestations];
+  }
+
   async getAttestationByTokenHash(tokenHash: string) {
     return (
       [...this.attestations.values()].find(

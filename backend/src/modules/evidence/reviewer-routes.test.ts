@@ -18,6 +18,7 @@ describe("Evidence Reviewer Routes", () => {
     app.use(express.json());
 
     const testAuthorization: EvidenceAuthorization = {
+      getProjectOrganiserId: async () => null,
       canUpload: async () => false,
       canReview: async () => false,
       canAccessReviewQueue: async () => true,

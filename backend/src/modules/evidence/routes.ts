@@ -48,6 +48,10 @@ export type UploaderIdentityResolver = (
 // --------------------------------------------------
 
 export interface EvidenceAuthorization {
+    getProjectOrganiserId(
+    projectId: string
+  ): Promise<string | null>;
+
   canUpload(
     req: Request,
     projectId: string,
@@ -97,6 +101,7 @@ export interface EvidenceAuthorization {
 // --------------------------------------------------
 
 export const denyAllEvidenceAuthorization: EvidenceAuthorization = {
+  getProjectOrganiserId: async () => null,
   canUpload: () => false,
   canReadEvidence: () => false,
   canReadProject: () => false,
@@ -293,6 +298,50 @@ export function createEvidenceRouter(
   authorization: EvidenceAuthorization = denyAllEvidenceAuthorization
 ) {
   const router = Router();
+  // Authorize before Multer processes the uploaded file.
+  const authorizeUploadBeforeParsing = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) => {
+    try {
+      const uploaderId = await resolveUploaderIdentity(req);
+
+      if (!uploaderId || !uploaderId.trim()) {
+        return unauthenticated(
+          res,
+          "Authenticated uploader identity is required."
+        );
+      }
+
+      const projectId = req.get("x-project-id")?.trim();
+      const expenseId = req.get("x-expense-id")?.trim();
+
+      if (!projectId || !expenseId) {
+        return res.status(400).json({
+          success: false,
+          message: "Project and expense identifiers are required.",
+        });
+      }
+
+      const allowed = await authorization.canUpload(
+        req,
+        projectId,
+        expenseId
+      );
+
+      if (!allowed) {
+        return unauthorized(
+          res,
+          "You are not authorized to upload evidence for this project."
+        );
+      }
+
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
 
   // --------------------------------------------------
   // 1. Shared upload handler
@@ -343,6 +392,20 @@ export function createEvidenceRouter(
         }
 
         const { projectId, expenseId } = parsed.data;
+
+        // Ensure the multipart body matches the identifiers authorized before parsing.
+        const authorizedProjectId = req.get("x-project-id")?.trim();
+        const authorizedExpenseId = req.get("x-expense-id")?.trim();
+
+        if (
+          authorizedProjectId !== projectId ||
+          authorizedExpenseId !== expenseId
+        ) {
+          return res.status(400).json({
+            success: false,
+            message: "Upload metadata does not match authorization metadata.",
+          });
+        }
 
         // Fail closed unless P3 supplies the permission implementation.
         const allowed = await authorization.canUpload(
@@ -426,6 +489,7 @@ export function createEvidenceRouter(
 
   router.post(
     "/milestones/:id/documents",
+    authorizeUploadBeforeParsing,
     handleSingleUpload,
     createUploadHandler(true)
   );
@@ -437,6 +501,7 @@ export function createEvidenceRouter(
 
   router.post(
     "/evidence",
+    authorizeUploadBeforeParsing,
     handleSingleUpload,
     createUploadHandler(false)
   );
@@ -865,15 +930,6 @@ export function createEvidenceRouter(
           );
         }
 
-        const organiserId = resolveOrganiserIdentity(req);
-
-        if (!organiserId || !organiserId.trim()) {
-          return unauthenticated(
-            res,
-            "Authenticated organiser identity is required."
-          );
-        }
-
         const parsed = gateAEvidenceRequestSchema.safeParse(req.body);
 
         if (!parsed.success) {
@@ -883,7 +939,19 @@ export function createEvidenceRouter(
           });
         }
 
+        const organiserId = await authorization.getProjectOrganiserId(
+          parsed.data.projectId
+        );
+
+        if (!organiserId) {
+          return unauthorized(
+            res,
+            "Unable to verify the project's organiser."
+          );
+        }
+
         const { projectId, expenseId, evidenceId } = parsed.data;
+
 
         if (
           !(await authorization.canAssessGateA(

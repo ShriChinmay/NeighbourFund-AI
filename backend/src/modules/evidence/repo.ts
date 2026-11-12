@@ -63,6 +63,15 @@ export interface EvidenceRepository {
     review: VerificationReview
   ): Promise<VerificationReview>;
 
+  /**
+   * Atomically updates a verification review and appends
+   * its corresponding audit event.
+   */
+  resolveVerificationReviewWithAudit(
+    review: VerificationReview,
+    event: VerificationReviewAuditEvent
+  ): Promise<VerificationReview>;
+
   // Append-only review audit history
   createReviewAuditEvent(
     event: VerificationReviewAuditEvent
@@ -81,4 +90,13 @@ export interface EvidenceRepository {
     evidenceId: string,
     reason: string
   ): Promise<VerificationReview[]>;
+
+  /**
+   * Atomically supersedes active evidence flags and verification
+   * reviews associated with the specified evidence.
+   */
+  invalidateEvidenceReviews(
+    evidenceId: string,
+    reason: string
+  ): Promise<void>;
 }

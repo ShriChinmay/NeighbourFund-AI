@@ -15,6 +15,7 @@ import {
 const uploadedFiles: string[] = [];
 
 const testAuthorization: EvidenceAuthorization = {
+  getProjectOrganiserId: async () => null,
   canUpload: async () => true,
   canReview: async () => true,
   canAccessReviewQueue: async () => true,

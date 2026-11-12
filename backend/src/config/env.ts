@@ -1,3 +1,4 @@
+
 import { config } from "dotenv";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -12,10 +13,14 @@ const schema = z.object({
     .enum(["development", "test", "production"])
     .default("development"),
 
-  // Preserve the existing P4 server default.
   PORT: z.coerce.number().int().min(1).max(65535).default(5000),
 
   DATABASE_URL: z.string().min(1).optional(),
+
+  P4_DEMO_MODE: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
 });
 
 export const env = schema.parse(process.env);

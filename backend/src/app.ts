@@ -32,8 +32,12 @@ import {
 } from "./modules/completion/routes.js";
 
 import {
-  InMemoryCompletionRepository,
-} from "./modules/completion/in-memory-repo.js";
+  PostgresCompletionRepository,
+} from "./modules/completion/postgres-repo.js";
+
+import {
+  PostgresEvidenceRepository,
+} from "./modules/evidence/postgres-repo.js";
 
 // P4 Evidence module
 import {
@@ -44,10 +48,6 @@ import {
 import {
   createEvidenceRouter,
 } from "./modules/evidence/routes.js";
-
-import {
-  InMemoryEvidenceRepository,
-} from "./modules/evidence/in-memory-repo.js";
 
 export function createApp() {
   const app = express();
@@ -97,7 +97,7 @@ export function createApp() {
   app.use("/api", fundingRouter);
 
   // P4 Completion module
-  const completionRepository = new InMemoryCompletionRepository();
+  const completionRepository = new PostgresCompletionRepository();
 
   const completionService = new CompletionService(
     completionRepository,
@@ -117,8 +117,9 @@ export function createApp() {
   );
 
   // P4 Evidence module
-  const evidenceRepository = new InMemoryEvidenceRepository();
+  const evidenceRepository = new PostgresEvidenceRepository();
 
+  
   const mockInvoiceExtractionProvider: InvoiceExtractionProvider = {
     async extractInvoice() {
       return {
@@ -135,9 +136,20 @@ export function createApp() {
     },
   };
 
+  const invoiceExtractionProvider: InvoiceExtractionProvider =
+    env.P4_DEMO_MODE && env.NODE_ENV !== "production"
+      ? mockInvoiceExtractionProvider
+      : {
+          async extractInvoice() {
+            throw new Error(
+              "Invoice extraction provider is not configured. Enable P4_DEMO_MODE only for explicit demo use."
+            );
+          },
+        };
+        
   const evidenceService = new EvidenceService(
     evidenceRepository,
-    mockInvoiceExtractionProvider
+    invoiceExtractionProvider
   );
 
   // Connect P3 authorization to P4 Evidence repository.
