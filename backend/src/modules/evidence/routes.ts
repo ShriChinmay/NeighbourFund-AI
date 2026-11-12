@@ -315,12 +315,12 @@ export function createEvidenceRouter(
       }
 
       const projectId = req.get("x-project-id")?.trim();
-      const expenseId = req.get("x-expense-id")?.trim();
+      const expenseId = req.get("x-expense-id")?.trim() || undefined;
 
-      if (!projectId || !expenseId) {
+      if (!projectId) {
         return res.status(400).json({
           success: false,
-          message: "Project and expense identifiers are required.",
+          message: "Project identifier is required.",
         });
       }
 
@@ -395,11 +395,12 @@ export function createEvidenceRouter(
 
         // Ensure the multipart body matches the identifiers authorized before parsing.
         const authorizedProjectId = req.get("x-project-id")?.trim();
-        const authorizedExpenseId = req.get("x-expense-id")?.trim();
+        const authorizedExpenseId = req.get("x-expense-id")?.trim() || undefined;
 
         if (
           authorizedProjectId !== projectId ||
-          authorizedExpenseId !== expenseId
+          (authorizedExpenseId !== undefined &&
+            authorizedExpenseId !== expenseId)
         ) {
           return res.status(400).json({
             success: false,

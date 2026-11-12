@@ -1,3 +1,4 @@
+
 import express, { type ErrorRequestHandler } from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -23,36 +24,26 @@ import {
 } from "./modules/platform/ownership/ownership.js";
 
 // P4 Completion module
-import {
-  CompletionService,
-} from "./modules/completion/service.js";
-
-import {
-  createCompletionRouter,
-} from "./modules/completion/routes.js";
-
+import { CompletionService } from "./modules/completion/service.js";
+import { createCompletionRouter } from "./modules/completion/routes.js";
 import {
   PostgresCompletionRepository,
 } from "./modules/completion/postgres-repo.js";
-
-import {
-  PostgresEvidenceRepository,
-} from "./modules/evidence/postgres-repo.js";
 
 // P4 Evidence module
 import {
   EvidenceService,
   type InvoiceExtractionProvider,
 } from "./modules/evidence/service.js";
-
+import { createEvidenceRouter } from "./modules/evidence/routes.js";
 import {
-  createEvidenceRouter,
-} from "./modules/evidence/routes.js";
+  PostgresEvidenceRepository,
+} from "./modules/evidence/postgres-repo.js";
 
 export function createApp() {
   const app = express();
 
-  // Security and middleware
+  // Security middleware
   app.disable("x-powered-by");
   app.use(helmet());
 
@@ -88,7 +79,7 @@ export function createApp() {
     });
   });
 
-  // Resolve trusted session identity for API routes.
+  // P3 authentication
   app.use("/api", optionalAuth);
 
   // P3 platform routes
@@ -96,12 +87,12 @@ export function createApp() {
   app.use("/api", projectsRouter);
   app.use("/api", fundingRouter);
 
-  // P4 Completion module
+  // P4 Completion
   const completionRepository = new PostgresCompletionRepository();
 
   const completionService = new CompletionService(
     completionRepository,
-    process.env.ATTESTATION_HMAC_SECRET ?? "",
+    env.ATTESTATION_HMAC_SECRET,
     undefined,
     {
       validateAttestationHouseholds,
@@ -116,10 +107,10 @@ export function createApp() {
     )
   );
 
-  // P4 Evidence module
+  // P4 Evidence
   const evidenceRepository = new PostgresEvidenceRepository();
 
-  
+  // No mock invoice extraction in normal or production mode.
   const mockInvoiceExtractionProvider: InvoiceExtractionProvider = {
     async extractInvoice() {
       return {
@@ -146,7 +137,7 @@ export function createApp() {
             );
           },
         };
-        
+
   const evidenceService = new EvidenceService(
     evidenceRepository,
     invoiceExtractionProvider
@@ -226,7 +217,7 @@ export function createApp() {
   return app;
 }
 
-// Preserve both P3 test imports and P4 server compatibility.
+// Preserve P3 test imports and P4 server compatibility.
 const app = createApp();
 
 export default app;

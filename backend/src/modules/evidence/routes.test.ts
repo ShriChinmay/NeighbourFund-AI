@@ -1,3 +1,4 @@
+
 import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -61,6 +62,7 @@ describe("Evidence Upload Routes", () => {
   it("uploads a valid PDF document using the authenticated uploader identity", async () => {
     const response = await request(app)
       .post("/api/milestones/milestone-1/documents")
+      .set("x-project-id", "project-1")
       .field("projectId", "project-1")
       .field("uploadedBy", "forged-client-uploader")
       .attach("file", Buffer.from("%PDF-1.4\nTest invoice"), {
@@ -82,6 +84,7 @@ describe("Evidence Upload Routes", () => {
   it("rejects a request without a file", async () => {
     const response = await request(app)
       .post("/api/milestones/milestone-1/documents")
+      .set("x-project-id", "project-1")
       .field("projectId", "project-1");
 
     expect(response.status).toBe(400);
@@ -92,6 +95,7 @@ describe("Evidence Upload Routes", () => {
   it("rejects an unsupported file type", async () => {
     const response = await request(app)
       .post("/api/milestones/milestone-1/documents")
+      .set("x-project-id", "project-1")
       .field("projectId", "project-1")
       .attach("file", Buffer.from("plain text"), {
         filename: "invoice.txt",
@@ -108,6 +112,7 @@ describe("Evidence Upload Routes", () => {
 
     const response = await request(app)
       .post("/api/milestones/milestone-1/documents")
+      .set("x-project-id", "project-1")
       .field("projectId", "project-1")
       .attach("file", oversizedFile, {
         filename: "large-invoice.pdf",
@@ -129,12 +134,13 @@ describe("Evidence Upload Routes", () => {
 
     expect(response.status).toBe(400);
     expect(response.body.success).toBe(false);
-    expect(response.body.errors).toBeDefined();
+    expect(response.body.message).toContain("Project identifier");
   });
 
   it("rejects a valid upload when the authorization interface denies access", async () => {
     const repository = new InMemoryEvidenceRepository();
     const service = new EvidenceService(repository);
+
     const denyAuthorization: EvidenceAuthorization = {
       getProjectOrganiserId: async () => null,
       canUpload: async () => false,
@@ -162,6 +168,7 @@ describe("Evidence Upload Routes", () => {
 
     const response = await request(deniedApp)
       .post("/api/milestones/milestone-1/documents")
+      .set("x-project-id", "project-1")
       .field("projectId", "project-1")
       .attach("file", Buffer.from("%PDF-1.4\nTest invoice"), {
         filename: "invoice.pdf",
@@ -172,7 +179,6 @@ describe("Evidence Upload Routes", () => {
     expect(response.body.success).toBe(false);
   });
 
-  
   it("blocks unauthorized evidence reads, project access, and invoice extraction", async () => {
     const repository = new InMemoryEvidenceRepository();
     const service = new EvidenceService(repository);

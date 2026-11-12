@@ -95,6 +95,8 @@ describe("Evidence expense linking routes", () => {
 
     const response = await request(app)
       .post("/api/evidence")
+      .set("x-project-id", "project-1")
+      .set("x-expense-id", "expense-1")
       .field("projectId", "project-1")
       .field("expenseId", "expense-1")
       .field("uploadedBy", "forged-client-uploader")
@@ -117,6 +119,8 @@ describe("Evidence expense linking routes", () => {
 
     const response = await request(app)
       .post("/api/evidence")
+      .set("x-project-id", "project-1")
+      .set("x-expense-id", "missing-expense")
       .field("projectId", "project-1")
       .field("expenseId", "missing-expense")
       .attach("file", Buffer.from("%PDF-1.4\nTest invoice"), {
@@ -134,6 +138,8 @@ describe("Evidence expense linking routes", () => {
 
     const response = await request(app)
       .post("/api/evidence")
+      .set("x-project-id", "project-1")
+      .set("x-expense-id", "expense-other-project")
       .field("projectId", "project-1")
       .field("expenseId", "expense-other-project")
       .attach("file", Buffer.from("%PDF-1.4\nTest invoice"), {
@@ -153,6 +159,8 @@ describe("Evidence expense linking routes", () => {
 
     const response = await request(app)
       .post("/api/milestones/milestone-1/documents")
+      .set("x-project-id", "project-1")
+      .set("x-expense-id", "expense-1")
       .field("projectId", "project-1")
       .field("expenseId", "expense-1")
       .attach("file", Buffer.from("%PDF-1.4\nTest invoice"), {
