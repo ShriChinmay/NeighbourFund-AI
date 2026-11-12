@@ -1,22 +1,14 @@
 import { lazy, Suspense } from "react";
-import { createBrowserRouter } from "react-router-dom";
+import { createBrowserRouter, Navigate } from "react-router-dom";
 
-// Keep the existing dashboard available until its routes are migrated.
 const LegacyDashboard = lazy(() => import("../App"));
+const Workspace = lazy(() => import("../pages/Workspace"));
+const NotFound = lazy(() => import("../pages/NotFound"));
+const loading = <main aria-busy="true" aria-live="polite">Loading page...</main>;
 
 export const router = createBrowserRouter([
-  {
-    path: "/*",
-    element: (
-      <Suspense
-        fallback={
-          <main aria-busy="true" aria-live="polite">
-            Loading dashboard...
-          </main>
-        }
-      >
-        <LegacyDashboard />
-      </Suspense>
-    ),
-  },
+  { path: "/", element: <Navigate to="/workspace" replace /> },
+  { path: "/workspace", element: <Suspense fallback={loading}><Workspace /></Suspense> },
+  { path: "/legacy", element: <Suspense fallback={loading}><LegacyDashboard /></Suspense> },
+  { path: "*", element: <Suspense fallback={loading}><NotFound /></Suspense> },
 ]);
