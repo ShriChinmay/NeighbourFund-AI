@@ -33,6 +33,7 @@ export function planFundingMix(
 ): FundingAiResult {
   const runId = `fake-a4-${randomUUID()}`;
 
+  // Validate the overall input.
   if (
     !input ||
     !Number.isSafeInteger(input.goalMinor) ||
@@ -43,6 +44,7 @@ export function planFundingMix(
     return { ok: false, reason: "invalid_output", runId };
   }
 
+  // Validate each funding source.
   for (const line of input.lines) {
     if (
       !line ||
@@ -57,19 +59,20 @@ export function planFundingMix(
     ) {
       return { ok: false, reason: "invalid_output", runId };
     }
-
-    // In-kind contributions cannot be counted as cash.
-    if (line.sourceType.toLowerCase() === "in-kind" && line.amountMinor > 0) {
-      return { ok: false, reason: "invalid_output", runId };
-    }
   }
 
+  // All contributions, including in-kind, count toward the funding goal,
+  // matching the P3 backend's current funding calculation.
   const total = input.lines.reduce(
     (sum, line) => sum + line.amountMinor,
     0
   );
 
-  if (!Number.isSafeInteger(total) || total !== input.goalMinor) {
+  // Reject unsafe totals and funding that does not match the goal.
+  if (
+    !Number.isSafeInteger(total) ||
+    total !== input.goalMinor
+  ) {
     return { ok: false, reason: "invalid_output", runId };
   }
 

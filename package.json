@@ -7,7 +7,7 @@
     "backend",
     "frontend",
     "ai",
-    "packages/*",
+    "shared/contracts",
     "shared/money"
   ],
   "scripts": {

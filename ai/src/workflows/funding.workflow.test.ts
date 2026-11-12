@@ -50,20 +50,58 @@ describe("A4 Funding Mix Planner", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("should reject in-kind contributions counted as cash", () => {
+  it("should accept positive in-kind contributions", () => {
     const result = planFundingMix({
       goalMinor: 100000,
       lines: [
         {
           sourceType: "in-kind",
           amountMinor: 100000,
-          rationale: "Free construction materials",
+          rationale: "Construction materials",
           risks: [],
         },
       ],
     });
 
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
+  });
+
+  it("should accept in_kind source naming used by P3", () => {
+    const result = planFundingMix({
+      goalMinor: 100000,
+      lines: [
+        {
+          sourceType: "in_kind",
+          amountMinor: 100000,
+          rationale: "Construction materials",
+          risks: [],
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("should include in-kind contributions in the funding total", () => {
+    const result = planFundingMix({
+      goalMinor: 100000,
+      lines: [
+        {
+          sourceType: "donation",
+          amountMinor: 60000,
+          rationale: "Community donations",
+          risks: [],
+        },
+        {
+          sourceType: "in-kind",
+          amountMinor: 40000,
+          rationale: "Construction materials",
+          risks: [],
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
   });
 
   it("should reject empty funding source names", () => {
